@@ -1,9 +1,9 @@
-.PHONY: all build doubletake doubletake-ctl doubletake-test-receiver doubletake-release doubletake-ctl-release doubletake-test-receiver-release manpages-release install install-man uninstall test clean
+.PHONY: all build doubletake doubletake-ctl doubletake-ui doubletake-test-receiver doubletake-release doubletake-ui-release doubletake-ctl-release doubletake-test-receiver-release manpages-release install install-man uninstall test clean
 
 PREFIX ?= /usr/local
 MANDIR ?= $(PREFIX)/share/man
 
-all: doubletake doubletake-ctl doubletake-test-receiver
+all: doubletake doubletake-ctl doubletake-ui doubletake-test-receiver
 
 build: all
 
@@ -13,6 +13,9 @@ doubletake:
 doubletake-ctl:
 	go build -o bin/doubletake-ctl ./cmd/doubletake-ctl
 
+doubletake-ui:
+	go build -o bin/doubletake-ui ./cmd/doubletake-ui
+
 doubletake-test-receiver:
 	go build -o bin/doubletake-test-receiver ./cmd/doubletake-test-receiver
 
@@ -21,6 +24,9 @@ doubletake-release:
 
 doubletake-ctl-release:
 	CGO_ENABLED=0 go build -ldflags='-s -w -extldflags=-static' -o doubletake-ctl ./cmd/doubletake-ctl
+
+doubletake-ui-release:
+	CGO_ENABLED=0 go build -ldflags='-s -w -extldflags=-static' -o doubletake-ui ./cmd/doubletake-ui
 
 doubletake-test-receiver-release:
 	CGO_ENABLED=0 go build -ldflags='-s -w -extldflags=-static' -o doubletake-test-receiver ./cmd/doubletake-test-receiver
@@ -34,6 +40,9 @@ test:
 install: all install-man
 	install -m 755 bin/doubletake $(PREFIX)/bin/
 	install -m 755 bin/doubletake-ctl $(PREFIX)/bin/
+	install -m 755 bin/doubletake-ui $(PREFIX)/bin/
+	install -d $(PREFIX)/share/applications
+	install -m 644 share/applications/doubletake-ui.desktop $(PREFIX)/share/applications/
 	install -m 755 bin/doubletake-test-receiver $(PREFIX)/bin/
 
 install-man:
@@ -45,6 +54,8 @@ install-man:
 uninstall:
 	rm -f $(PREFIX)/bin/doubletake
 	rm -f $(PREFIX)/bin/doubletake-ctl
+	rm -f $(PREFIX)/bin/doubletake-ui
+	rm -f $(PREFIX)/share/applications/doubletake-ui.desktop
 	rm -f $(PREFIX)/bin/doubletake-test-receiver
 	rm -f $(MANDIR)/man1/doubletake.1
 	rm -f $(MANDIR)/man1/doubletake-ctl.1

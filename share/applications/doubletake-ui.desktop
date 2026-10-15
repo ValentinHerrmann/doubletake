@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Doubletake
+GenericName=AirPlay Screen Mirroring
+Comment=Mirror your screen or a window to an Apple TV or AirPlay receiver
+Exec=doubletake-ui
+Icon=video-display
+Terminal=false
+Categories=AudioVideo;Video;Network;
+Keywords=AirPlay;Apple TV;mirror;cast;projector;

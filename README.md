@@ -71,10 +71,11 @@ These are devices that have been tested with doubletake. If there are devices no
 make
 ```
 
-This builds the three binaries into `bin/`:
+This builds the binaries into `bin/`:
 
 - `bin/doubletake`
 - `bin/doubletake-ctl`
+- `bin/doubletake-ui`
 - `bin/doubletake-test-receiver`
 
 ## Install
@@ -120,6 +121,28 @@ error if advertised capabilities select AAC-ELD. A nonzero screen-audio mask
 which advertises neither ALAC nor AAC-ELD is also rejected instead of silently
 sending an unadvertised format. Use `-no-audio` to keep testing pairing, timing,
 and video when the advertised audio format is unavailable.
+
+## Desktop UI
+
+`doubletake-ui` is a small graphical front end for the `doubletake` CLI. It
+opens an app window (Chrome/Chromium, served from `127.0.0.1`) that lists the
+AirPlay receivers on the network, asks for the PIN when a receiver shows one,
+and starts or stops mirroring. **Refresh** restarts discovery, which helps when
+a receiver was missed. The **Screen / Window / Ask** switch chooses what the
+screen-sharing dialog offers (`-source monitor|window|any`).
+
+```sh
+doubletake-ui                         # opens the window, starts searching
+doubletake-ui -source window -no-audio
+doubletake-ui -no-window              # print the URL instead of opening a window
+```
+
+It uses the `doubletake` binary next to itself (or `doubletake-src`, then
+`doubletake` on `PATH`; override with `-doubletake <path>`). Only one instance
+runs per user: starting it again opens another window to the running instance
+and, with `-source`, switches its capture source. It exits about 30 seconds
+after its window is closed unless a cast is running. `make install` also
+installs a `Doubletake` desktop entry.
 
 ## Firewall
 
