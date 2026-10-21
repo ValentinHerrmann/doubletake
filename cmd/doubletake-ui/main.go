@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
@@ -25,6 +26,7 @@ type options struct {
 	source     string
 	sourceSet  bool
 	noAudio    bool
+	hidden     bool
 }
 
 // parseOptions parses a command line. It runs in the primary instance for
@@ -37,6 +39,7 @@ func parseOptions(args []string) (options, string, error) {
 	fs.StringVar(&opts.doubletake, "doubletake", "", "Path to the doubletake binary used to start the daemon (default: next to this binary, then doubletake-src or doubletake on PATH)")
 	fs.StringVar(&opts.source, "source", "any", "Capture source: any (picker offers screens and windows), monitor or window")
 	fs.BoolVar(&opts.noAudio, "no-audio", false, "Do not stream audio (applies when this UI starts the daemon)")
+	fs.BoolVar(&opts.hidden, "hidden", false, "Start in the system tray without showing the window (shows it if no tray appears)")
 	if err := fs.Parse(args); err != nil {
 		return opts, out.String(), err
 	}
@@ -61,6 +64,16 @@ func main() {
 		}
 		if win == nil {
 			win = newWindow(app, opts)
+			startTray(app, win)
+			if opts.hidden {
+				w := win
+				go func() {
+					if !waitForTray(trayWait) {
+						glib.IdleAdd(w.Present)
+					}
+				}()
+				return 0
+			}
 		} else if opts.sourceSet {
 			win.setSource(opts.source)
 		}

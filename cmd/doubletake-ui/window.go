@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 
 	"github.com/diamondburned/gotk4/pkg/core/glib"
+	"github.com/diamondburned/gotk4/pkg/gio/v2"
+	glibv2 "github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 
 	"doubletake/internal/daemon"
@@ -36,6 +38,8 @@ type window struct {
 	pin     *gtk.Entry
 	stop    *gtk.Button
 
+	tray      *tray // nil until the tray icon is exported
+	autostart *gio.SimpleAction
 	ready     bool // the daemon is up
 	polling   atomic.Bool
 	timer     glib.SourceHandle
@@ -60,6 +64,13 @@ func newWindow(app *gtk.Application, opts options) *window {
 	w.badge = gtk.NewLabel("…")
 	w.badge.AddCSSClass("dim-label")
 	header.PackEnd(w.badge)
+	w.addAutostartAction(app)
+	menu := gio.NewMenu()
+	menu.Append("Start on login", "app.autostart")
+	menuButton := gtk.NewMenuButton()
+	menuButton.SetIconName("open-menu-symbolic")
+	menuButton.SetMenuModel(menu)
+	header.PackStart(menuButton)
 	w.SetTitlebar(header)
 
 	body := gtk.NewBox(gtk.OrientationVertical, 12)
@@ -133,7 +144,13 @@ func newWindow(app *gtk.Application, opts options) *window {
 		w.poll()
 		return true
 	})
+	// With a tray host the window only hides: the app keeps polling so the
+	// tray menu stays current. Without one, closing quits as before.
 	w.ConnectCloseRequest(func() bool {
+		if w.tray != nil && trayAvailable() {
+			w.SetVisible(false)
+			return true
+		}
 		glib.SourceRemove(w.timer)
 		return false
 	})
@@ -150,6 +167,34 @@ func newWindow(app *gtk.Application, opts options) *window {
 		})
 	}()
 	return w
+}
+
+// addAutostartAction registers app.autostart, a boolean shared by the window
+// menu and the tray checkbox. Activating it toggles the login entry.
+func (w *window) addAutostartAction(app *gtk.Application) {
+	w.autostart = gio.NewSimpleActionStateful("autostart", nil, glibv2.NewVariantBoolean(autostartEnabled()))
+	w.autostart.ConnectChangeState(func(value *glibv2.Variant) {
+		on := value.Boolean()
+		if err := setAutostart(on); err != nil {
+			w.actionErr = "Start on login: " + err.Error()
+			w.poll()
+			on = !on
+		}
+		w.autostart.SetState(glibv2.NewVariantBoolean(on))
+		if w.tray != nil {
+			w.tray.setAutostart(on)
+		}
+	})
+	app.AddAction(w.autostart)
+}
+
+// toggleVisible shows a hidden window and hides a shown one (tray click).
+func (w *window) toggleVisible() {
+	if w.IsVisible() {
+		w.SetVisible(false)
+	} else {
+		w.Present()
+	}
 }
 
 // setSource selects a capture source for the next connection.
@@ -227,6 +272,9 @@ func (w *window) render(v view) {
 	}
 	w.stop.SetSensitive(v.canStop)
 	w.renderDevices(v)
+	if w.tray != nil {
+		w.tray.update(v)
+	}
 
 	w.pinBox.SetVisible(v.credential != "")
 	if v.credential != "" && v.credential != prev.credential {

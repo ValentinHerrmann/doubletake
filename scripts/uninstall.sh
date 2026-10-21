@@ -13,7 +13,8 @@ pkill -x doubletake 2>/dev/null || true
 
 rm -f "$PREFIX/bin/doubletake" "$PREFIX/bin/doubletake-ui" \
 	"$PREFIX/share/applications/doubletake-ui.desktop" \
-	"$PREFIX/share/icons/hicolor/scalable/apps/doubletake.svg"
+	"$PREFIX/share/icons/hicolor/scalable/apps/doubletake.svg" \
+	"${XDG_CONFIG_HOME:-$HOME/.config}/autostart/doubletake-ui.desktop"
 if command -v update-desktop-database >/dev/null; then update-desktop-database -q "$PREFIX/share/applications" || true; fi
 if command -v gtk-update-icon-cache >/dev/null; then gtk-update-icon-cache -q -t "$PREFIX/share/icons/hicolor" || true; fi
 

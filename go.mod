@@ -3,6 +3,7 @@ module doubletake
 go 1.25.0
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29
 	github.com/diamondburned/gotk4/pkg v0.3.1
 	github.com/godbus/dbus/v5 v5.2.2

@@ -18,7 +18,8 @@ refresh_caches() {
 }
 
 if [ "${1:-}" = "--uninstall" ]; then
-	rm -f "$BINDIR/doubletake" "$BINDIR/doubletake-ui" "$APPDIR/doubletake-ui.desktop" "$ICONDIR/doubletake.svg"
+	rm -f "$BINDIR/doubletake" "$BINDIR/doubletake-ui" "$APPDIR/doubletake-ui.desktop" "$ICONDIR/doubletake.svg" \
+		"${XDG_CONFIG_HOME:-$HOME/.config}/autostart/doubletake-ui.desktop"
 	refresh_caches
 	echo "Doubletake removed from $PREFIX."
 	exit 0

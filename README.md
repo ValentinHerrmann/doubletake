@@ -78,6 +78,7 @@ receiver, so the dialog appears only once.
 doubletake-ui                         # open the window
 doubletake-ui -source window          # preselect Window
 doubletake-ui -no-audio               # video only (when the app starts the daemon)
+doubletake-ui -hidden                 # start in the system tray
 ```
 
 The app drives the doubletake daemon over its control socket, the same
@@ -90,6 +91,21 @@ Closing the window does not stop a cast: the daemon keeps running. Stop it
 with **Stop casting** or `doubletake-ctl disconnect`. Only one window runs per
 user; starting the app again raises it and, with `-source`, switches its
 capture source.
+
+### System tray and start on login
+
+With a system tray, closing the window hides it to a tray icon. Click the
+icon to show or hide the window. Its menu has **Show Doubletake**, **Stop
+casting**, **Start on login** and **Quit**. KDE Plasma has a tray built in.
+GNOME needs the
+[AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
+extension. Without a tray, closing the window quits the app as before.
+
+**Start on login** is off by default. Turn it on from the tray menu or the
+window menu (☰). It writes `~/.config/autostart/doubletake-ui.desktop`, which
+starts `doubletake-ui -hidden` in the tray. If no tray appears within a few
+seconds, `-hidden` shows the window instead. Turning the option off removes the
+file, and so does the uninstall script.
 
 ## Command line
 
