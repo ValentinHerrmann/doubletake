@@ -16,9 +16,10 @@ UI_RELEASE_FLAGS := -ldflags='-s -w'
 need-go:
 	@command -v go >/dev/null || { echo "error: Go is not installed; install it first (Arch: sudo pacman -S go, Debian/Ubuntu: sudo apt install golang-go)" >&2; exit 1; }
 
-# doubletake-ui needs the GTK 4 development files (4.14 or newer).
+# doubletake-ui needs the GTK 4 (4.14 or newer) and GObject Introspection
+# development files.
 need-gtk:
-	@pkg-config --exists 'gtk4 >= 4.14' || { echo "error: GTK 4.14+ development files not found (Arch: sudo pacman -S gtk4, Debian/Ubuntu: sudo apt install libgtk-4-dev)" >&2; exit 1; }
+	@pkg-config --exists 'gtk4 >= 4.14' gobject-introspection-1.0 || { echo "error: GTK 4.14+ or GObject Introspection development files not found (Arch: sudo pacman -S gtk4 gobject-introspection, Debian/Ubuntu: sudo apt install libgtk-4-dev libgirepository1.0-dev)" >&2; exit 1; }
 
 all: doubletake doubletake-ctl doubletake-ui doubletake-test-receiver
 

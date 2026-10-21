@@ -146,8 +146,9 @@ window is closed, so a cast continues; stop it with **Stop casting**,
 user: starting the UI again raises it and, with `-source`, switches its capture
 source. `make install` also installs a `Doubletake` desktop entry.
 
-Building it needs the GTK 4.14+ development files (`libgtk-4-dev` on
-Debian/Ubuntu, `gtk4` on Arch). The first build compiles the GTK bindings and
+Building it needs the GTK 4.14+ and GObject Introspection development files
+(`libgtk-4-dev libgirepository1.0-dev` on Debian/Ubuntu,
+`gtk4 gobject-introspection` on Arch). The first build compiles the GTK bindings and
 takes several minutes; later builds are cached.
 
 ### Installing the desktop app
