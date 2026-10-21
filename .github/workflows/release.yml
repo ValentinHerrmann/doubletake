@@ -57,21 +57,15 @@ jobs:
           if [ -z "$NOTES" ]; then
             NOTES=$(git log -1 --format='%B' "${GITHUB_REF_NAME}")
           fi
-          RAW=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts
+          # Install commands and dependencies for users, from a template.
+          INSTALL=$(sed -e "s|@RAW@|https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts|g" \
+            -e "s|@DL@|https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}|g" \
+            .github/release-install.md)
           {
             echo 'RELEASE_NOTES<<EOF'
             echo "$NOTES"
             echo
-            echo '## Install'
-            echo
-            echo 'Install the desktop app (into `~/.local`, no root):'
-            echo
-            echo '```sh'
-            echo "curl -fsSL $RAW/install.sh | sh"
-            echo '```'
-            echo
-            echo "Update: \`curl -fsSL $RAW/update.sh | sh\`  "
-            echo "Uninstall: \`curl -fsSL $RAW/uninstall.sh | sh\`"
+            echo "$INSTALL"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 

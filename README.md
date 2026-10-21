@@ -21,24 +21,26 @@ Install the latest release of the desktop app and `doubletake` into
 `~/.local` (no root needed):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake-ui/main/scripts/install.sh | sh
 ```
 
 Update to the latest release, or remove it again (pairing credentials in
 `~/.config/doubletake` are kept):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/update.sh | sh
-curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake-ui/main/scripts/update.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake-ui/main/scripts/uninstall.sh | sh
 ```
 
 The installer downloads the bundle for your architecture (x86_64 or aarch64),
 verifies it against the release's `SHA256SUMS` and adds a **Doubletake** entry
 to the app menu. It does not install `doubletake-ctl`; download it from the
-[latest release](https://github.com/ValentinHerrmann/doubletake/releases/latest)
+[latest release](https://github.com/ValentinHerrmann/doubletake-ui/releases/latest)
 or [build from source](#build-from-source).
 
 ### Runtime requirements
+
+The install scripts do not install these system packages; install them first.
 
 - GStreamer 1.0 with the base, good, bad, ugly and libav plugins
 - PulseAudio utilities (`pactl`)
@@ -386,7 +388,7 @@ and video when the advertised audio format is unavailable.
 
 ## Releases
 
-Each [GitHub release](https://github.com/ValentinHerrmann/doubletake/releases)
+Each [GitHub release](https://github.com/ValentinHerrmann/doubletake-ui/releases)
 contains:
 
 - `doubletake`, `doubletake-ctl`, `doubletake-test-receiver`: static x86_64

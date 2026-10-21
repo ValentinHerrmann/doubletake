@@ -1,7 +1,7 @@
 #!/bin/sh
 # Removes the Doubletake desktop app installed by install.sh:
 #
-#   curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/uninstall.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake-ui/main/scripts/uninstall.sh | sh
 #
 # Pairing credentials in ~/.config/doubletake are kept.
 set -eu

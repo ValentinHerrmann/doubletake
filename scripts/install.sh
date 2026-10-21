@@ -1,12 +1,12 @@
 #!/bin/sh
 # Installs the latest Doubletake desktop app release into ~/.local (no root):
 #
-#   curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake-ui/main/scripts/install.sh | sh
 #
 # Set PREFIX to install elsewhere (e.g. PREFIX=/usr/local, run as root).
 set -eu
 
-REPO=ValentinHerrmann/doubletake
+REPO=ValentinHerrmann/doubletake-ui
 BASE=https://github.com/$REPO/releases/latest/download
 
 case $(uname -m) in
