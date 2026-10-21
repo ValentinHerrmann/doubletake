@@ -7,7 +7,23 @@ on:
     tags: ["v*"]
 
 jobs:
+  # Releases are cut only from main.
+  on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check that the tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} does not point to a commit on main; tag a commit on main instead."
+            exit 1
+          fi
+
   ci:
+    needs: on-main
     uses: ./.github/workflows/ci.yml
 
   release:
@@ -41,9 +57,21 @@ jobs:
           if [ -z "$NOTES" ]; then
             NOTES=$(git log -1 --format='%B' "${GITHUB_REF_NAME}")
           fi
+          RAW=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts
           {
             echo 'RELEASE_NOTES<<EOF'
             echo "$NOTES"
+            echo
+            echo '## Install'
+            echo
+            echo 'Install the desktop app (into `~/.local`, no root):'
+            echo
+            echo '```sh'
+            echo "curl -fsSL $RAW/install.sh | sh"
+            echo '```'
+            echo
+            echo "Update: \`curl -fsSL $RAW/update.sh | sh\`  "
+            echo "Uninstall: \`curl -fsSL $RAW/uninstall.sh | sh\`"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
