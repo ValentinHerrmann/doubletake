@@ -155,6 +155,24 @@ takes several minutes; later builds are cached.
 
 Each install adds a **Doubletake** entry with its own icon to the app menu.
 
+Quickest: install the latest release into `~/.local` (no root; needs GTK 4.14+
+and the GStreamer packages from [Requirements](#requirements)):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/install.sh | sh
+```
+
+Update to the latest release, or remove it again (pairing credentials in
+`~/.config/doubletake` are kept):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/update.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/uninstall.sh | sh
+```
+
+The installer downloads the release bundle for your architecture, verifies it
+against `SHA256SUMS` and runs the bundle's `install.sh`. From a checkout:
+
 ```sh
 make install-user        # into ~/.local, no root needed (undo: make uninstall-user)
 sudo make install        # into /usr/local for all users
@@ -188,9 +206,11 @@ contains:
 - `doubletake-manpages.tar.gz`
 - `SHA256SUMS`: verify downloads with `sha256sum -c --ignore-missing SHA256SUMS`
 
-To publish a release, push an annotated `v*` tag. The
+To publish a release, push an annotated `v*` tag on a commit on `main`; the
+workflow refuses tags elsewhere. The
 [Release workflow](.github/workflows/release.yml) runs the CI tests and builds,
-then creates the release with the tag message as its notes. Tags with a `-`
+then creates the release with the tag message as its notes, followed by the
+install commands. Tags with a `-`
 (e.g. `v0.4.0-rc1`) become pre-releases.
 
 ```sh
