@@ -1,162 +1,24 @@
 # doubletake
 
-AirPlay screen mirroring sender for Linux. Streams your desktop to an Apple TV using the AirPlay mirroring protocol.
+AirPlay screen mirroring sender for Linux. Streams your desktop, or a single
+window, to an Apple TV or another AirPlay receiver.
 
-## Features
+This is a fork of [omarroth/doubletake](https://github.com/omarroth/doubletake).
+It adds:
 
-- Full AirPlay mirroring protocol (RTSP/HTTP + encrypted video stream)
-- FairPlay SAP authentication (clean Go implementation)
-- SRP-6a pairing with PIN and persistent credential storage
-- Wayland (PipeWire/xdg-desktop-portal) and X11 screen capture
-- H.264 encoding with NVENC, VA-API, OpenH264, and x264
-- Capability-gated HEVC Main10/high-resolution encoding with NVENC or x265
-- ChaCha20-Poly1305 stream encryption
-- mDNS device discovery
-- Daemon mode with multi-target streaming control (`doubletake-ctl`)
-- In-process test receiver for hardware-free pairing and media-flow tests
-- Automatic connection-aware screen/audio latency policy with an optional `-target-latency-ms` override
-- KDE Plasma widget for quick access (see [plasmoid/](plasmoid/))
+- **Doubletake desktop app** (`doubletake-ui`): a native GTK 4 window to pick a
+  receiver, enter its PIN and start or stop mirroring.
+- **Capture source choice**: `-source any|monitor|window` on the CLI and the
+  daemon, and a Screen / Window / Ask switch in the app.
+- **One-line install, update and uninstall** from this fork's releases.
 
-## Requirements
-
-- Go 1.23+
-- GStreamer 1.0 (with plugins-base, plugins-good, plugins-bad, plugins-ugly, libav)
-- PulseAudio utilities (`pactl`; `pulseaudio-utils` on Ubuntu/Debian or the equivalent package on other distributions)
-- PipeWire (Wayland) or X11 for screen capture
-
-### Ubuntu/Debian
-
-```sh
-sudo apt install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-  gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-  gstreamer1.0-plugins-ugly gstreamer1.0-libav pulseaudio-utils
-```
-
-### Arch Linux
-
-```sh
-sudo pacman -S gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
-  gst-plugins-ugly gst-libav libpulse
-```
-
-The `openh264` encoder requires the GStreamer `openh264enc` element, normally
-provided by the plugins-bad package. Check availability with
-`gst-inspect-1.0 openh264enc`.
-
-You can also install from the AUR:
-
-- [`doubletake`](https://aur.archlinux.org/packages/doubletake) (stable release package)
-- [`doubletake-git`](https://aur.archlinux.org/packages/doubletake-git) (latest from git)
-- [`doubletake-bin`](https://aur.archlinux.org/packages/doubletake-bin) (prebuilt binary package)
-
-## Tested Devices
-
-These are devices that have been tested with doubletake. If there are devices not listed here that you have confirmed working or non-functional, please open an issue.
-
-- AppleTV3,2 (2013 3rd generation)
-- AppleTV11,1 (4K, 2021 2nd gen)
-- AppleTV14,1 (4K, 2022 3rd gen) + Homepod (1st gen)
-- AppleTV14,1 (4K, 2022 3rd gen)
-- Mac17,2 (MacBook Pro, M5 14")
-- Mac16,10 (Mac mini, M4)
-- Roku Streaming Stick 4K (3820R2)
-- Samsung TV TU8300 Series 4K UHD
-- TCL 55Q6C
-- Hisense 55A6QU
-- Xiaomi 4K HDR TV (AFTBR92D74) (currently non-functional, see [#4](https://github.com/omarroth/doubletake/issues/4))
-
-## Build
-
-```sh
-make
-```
-
-This builds the binaries into `bin/`:
-
-- `bin/doubletake`
-- `bin/doubletake-ctl`
-- `bin/doubletake-ui`
-- `bin/doubletake-test-receiver`
+The AUR packages (`doubletake`, `doubletake-git`, `doubletake-bin`) build
+upstream, without these additions.
 
 ## Install
 
-Install binaries and man pages (default prefix: `/usr/local`):
-
-```sh
-sudo make install
-```
-
-Use a custom prefix if needed:
-
-```sh
-make install PREFIX=$HOME/.local
-```
-
-Uninstall:
-
-```sh
-sudo make uninstall
-```
-
-Run tests:
-
-```sh
-make test
-```
-
-### Optional AAC-ELD support
-
-Doubletake selects screen audio from the receiver's advertised
-`supportedFormats.screenStream` mask. Default builds use the built-in ALAC
-encoder when the receiver advertises it. AAC-ELD remains an explicit opt-in
-because it depends on the system `libfdk-aac` development files and cgo:
-
-```sh
-CGO_ENABLED=1 go build -tags fdk_aac -o bin/doubletake ./cmd/doubletake
-```
-
-Install the package that provides the `fdk-aac` pkg-config file and headers for
-your distribution before running that command. A default build reports a clear
-error if advertised capabilities select AAC-ELD. A nonzero screen-audio mask
-which advertises neither ALAC nor AAC-ELD is also rejected instead of silently
-sending an unadvertised format. Use `-no-audio` to keep testing pairing, timing,
-and video when the advertised audio format is unavailable.
-
-## Desktop UI
-
-`doubletake-ui` is a small native GTK 4 front end for the doubletake daemon.
-Its window lists the AirPlay receivers on the network (discovery runs
-continuously), asks for the PIN or password when a receiver needs one, and
-starts or stops mirroring. The **Screen / Window / Ask** switch chooses what
-the screen-sharing dialog offers for the next connection
-(`-source monitor|window|any`).
-
-```sh
-doubletake-ui                         # opens the window
-doubletake-ui -source window -no-audio
-```
-
-It talks to the daemon over its control socket, the same interface that
-`doubletake-ctl` and the Plasma widget use. If no daemon is running, it starts
-`doubletake -daemonize` from the binary next to itself (or `doubletake-src`,
-then `doubletake` on `PATH`; override with `-doubletake <path>`). `-no-audio`
-applies only to a daemon the UI starts. The daemon keeps running after the
-window is closed, so a cast continues; stop it with **Stop casting**,
-`doubletake-ctl disconnect`, or by ending the daemon. Only one window runs per
-user: starting the UI again raises it and, with `-source`, switches its capture
-source. `make install` also installs a `Doubletake` desktop entry.
-
-Building it needs the GTK 4.14+ and GObject Introspection development files
-(`libgtk-4-dev libgirepository1.0-dev` on Debian/Ubuntu,
-`gtk4 gobject-introspection` on Arch). The first build compiles the GTK bindings and
-takes several minutes; later builds are cached.
-
-### Installing the desktop app
-
-Each install adds a **Doubletake** entry with its own icon to the app menu.
-
-Quickest: install the latest release into `~/.local` (no root; needs GTK 4.14+
-and the GStreamer packages from [Requirements](#requirements)):
+Install the latest release of the desktop app and `doubletake` into
+`~/.local` (no root needed):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/install.sh | sh
@@ -170,143 +32,74 @@ curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/sc
 curl -fsSL https://raw.githubusercontent.com/ValentinHerrmann/doubletake/main/scripts/uninstall.sh | sh
 ```
 
-The installer downloads the release bundle for your architecture, verifies it
-against `SHA256SUMS` and runs the bundle's `install.sh`. From a checkout:
+The installer downloads the bundle for your architecture (x86_64 or aarch64),
+verifies it against the release's `SHA256SUMS` and adds a **Doubletake** entry
+to the app menu. It does not install `doubletake-ctl`; download it from the
+[latest release](https://github.com/ValentinHerrmann/doubletake/releases/latest)
+or [build from source](#build-from-source).
+
+### Runtime requirements
+
+- GStreamer 1.0 with the base, good, bad, ugly and libav plugins
+- PulseAudio utilities (`pactl`)
+- PipeWire and xdg-desktop-portal (Wayland) or X11 for screen capture
+- GTK 4.14 or newer for the desktop app
 
 ```sh
-make install-user        # into ~/.local, no root needed (undo: make uninstall-user)
-sudo make install        # into /usr/local for all users
+# Arch Linux
+sudo pacman -S gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad \
+  gst-plugins-ugly gst-libav libpulse gtk4
+
+# Ubuntu/Debian
+sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+  pulseaudio-utils libgtk-4-1
 ```
 
-Without a Go toolchain, download `doubletake-ui-linux-amd64.tar.gz` (or
-`-arm64`) from the [latest release](https://github.com/ValentinHerrmann/doubletake/releases/latest)
-and run its installer (also into `~/.local`):
+The `openh264` encoder needs the GStreamer `openh264enc` element, normally from
+the plugins-bad package. Check with `gst-inspect-1.0 openh264enc`.
+
+## Desktop app
+
+Start **Doubletake** from the app menu, or run `doubletake-ui`. The window:
+
+- lists the AirPlay receivers on the network (discovery runs continuously);
+- starts mirroring when you click a receiver;
+- asks for the PIN shown on the receiver, or its password, when needed;
+- stops with **Stop casting**.
+
+The **Screen / Window / Ask** switch chooses what the screen-sharing dialog
+offers for the next connection. **Screen** remembers the chosen screen per
+receiver, so the dialog appears only once.
 
 ```sh
-curl -LO https://github.com/ValentinHerrmann/doubletake/releases/latest/download/doubletake-ui-linux-amd64.tar.gz
-tar -xzf doubletake-ui-linux-amd64.tar.gz
-./doubletake-ui-linux-amd64/install.sh               # ./install.sh --uninstall removes it
+doubletake-ui                         # open the window
+doubletake-ui -source window          # preselect Window
+doubletake-ui -no-audio               # video only (when the app starts the daemon)
 ```
 
-The GStreamer packages from [Requirements](#requirements) and GTK 4.14 or
-newer are needed at runtime. `make ui-bundle` builds the tarball locally.
-Packagers can stage with `make install DESTDIR=... PREFIX=/usr`.
+The app drives the doubletake daemon over its control socket, the same
+interface as `doubletake-ctl` and the [Plasma widget](plasmoid/). If no daemon
+is running, it starts `doubletake -daemonize` from the binary next to itself
+(or `doubletake-src`, then `doubletake` on `PATH`; override with
+`-doubletake <path>`). `-no-audio` applies only to a daemon the app starts.
 
-## Releases
+Closing the window does not stop a cast: the daemon keeps running. Stop it
+with **Stop casting** or `doubletake-ctl disconnect`. Only one window runs per
+user; starting the app again raises it and, with `-source`, switches its
+capture source.
 
-Each [GitHub release](https://github.com/ValentinHerrmann/doubletake/releases)
-contains:
+## Command line
 
-- `doubletake`, `doubletake-ctl`, `doubletake-test-receiver`: static x86_64
-  binaries (`-arm64` suffix for aarch64)
-- `doubletake-ui`: x86_64 binary linked against the system GTK 4.14+
-  (`-arm64` suffix for aarch64)
-- `doubletake-ui-linux-amd64.tar.gz`, `doubletake-ui-linux-arm64.tar.gz`: the
-  desktop app bundle with `install.sh` (see [Installing the desktop app](#installing-the-desktop-app))
-- `doubletake-manpages.tar.gz`
-- `SHA256SUMS`: verify downloads with `sha256sum -c --ignore-missing SHA256SUMS`
-
-To publish a release, push an annotated `v*` tag on a commit on `main`; the
-workflow refuses tags elsewhere. The
-[Release workflow](.github/workflows/release.yml) runs the CI tests and builds,
-then creates the release with the tag message as its notes, followed by the
-install commands. Tags with a `-`
-(e.g. `v0.4.0-rc1`) become pre-releases.
-
-```sh
-git tag -a v0.4.0 -m "doubletake v0.4.0: desktop UI"
-git push origin v0.4.0
-```
-
-## Firewall
-
-doubletake binds three consecutive local UDP ports for each stream:
-
-- `N`: timing. A receiver-initiated NTP session probes this port during SETUP.
-- `N+1`: audio control and receiver retransmission requests.
-- `N+2`: outgoing audio data.
-
-PTP and sender-initiated NTP sessions do not require a new inbound timing
-connection, but the receiver can still send audio retransmission requests to
-the control port. The event and video data channels are outbound TCP
-connections from doubletake to ports returned by the receiver. Doubletake does
-not listen for inbound TCP connections.
-
-No router port forwarding or Internet exposure is needed. If the host firewall
-allows local-network traffic, no firewall configuration is necessary. With a
-default-deny host firewall, use `-port-range MIN-MAX` to replace unpredictable
-ephemeral UDP ports with a range you can allow from the receiver. The range
-must contain at least three ports:
-
-```sh
-doubletake -target 192.168.1.77 -port-range 60000-60010
-```
-
-Daemon mode uses the same range for every managed stream. Reserve at least
-three available ports per receiver that may stream simultaneously.
-
-For example, restrict a UFW rule to the receiver's address:
-
-```sh
-sudo ufw allow from 192.168.1.77 proto udp to any port 60000:60010
-```
-
-Add a rule for each receiver, or use the trusted LAN subnet as the source. For
-nftables/firewalld, add an equivalent inbound UDP rule for the selected source
-and range.
-
-NTP and PTP use the same presentation policy; the timing protocol only changes
-how timestamps are represented. In automatic mode, an ordinary connection uses
-a 75 ms video lead and an 85 ms screen-audio lead.
-
-## Password-protected receivers
-
-If the receiver has **Require Password** enabled (on an Apple TV: Settings →
-AirPlay and HomeKit), it challenges the mirroring `SETUP` request with HTTP
-Digest auth and mirroring fails with `HTTP 401` until doubletake answers it.
-Pass the password with `-code`:
-
-```sh
-DOUBLETAKE_CODE='...' doubletake -target 192.168.1.77
-```
-
-`-code` carries whatever the receiver is asking for — the onscreen pairing PIN
-during `-pair`, or the fixed password when "Require Password" is enabled.
-`$DOUBLETAKE_CODE` is preferred over the flag: a command line is visible to
-other users via `ps` and lands in shell history. The environment variable takes
-precedence when both are set.
-
-Pairing and Digest authentication remain separate wire protocols, but
-doubletake deliberately uses one credential flow for both: a PIN/password
-entered during pairing is retained for later Digest challenges and reconnects.
-A receiver may consume that value during pairing, Digest auth, both, or neither.
-Supplying `-code` does not by itself trigger re-pairing.
-
-When the capability policy selects first-party CoreUtils/HAP pairing, a
-configured fixed password is reserved for Digest authentication and is never
-reused as an SRP pairing PIN, including with `-pair`. A legacy/HKP pairing flow
-may consume the same entered value during both SRP and Digest when its protocol
-requires it.
-
-The CLI and Plasma applet prompt once after inspecting the receiver's security
-mode. In the Plasma applet, an on-screen PIN uses a visible four-digit field,
-while a configured password uses an unrestricted masked field. Doubletake does
-not request or claim that a PIN is visible in password mode. The daemon exposes
-the distinction while retaining `doubletake-ctl pin <PIN-or-password>` for
-command compatibility when exactly one receiver is waiting. With concurrent
-prompts, submit each value with `doubletake-ctl connect TARGET PIN-or-password`.
-
-One thing that makes this confusing to diagnose: **"Require Password" is a
-fixed password you set, not a rotating onscreen code.** Nothing appears on the
-TV during `-pair`, and the prompt is asking for that configured password.
-
-Run with `-debug` to see the challenge and whether the retry was accepted.
-
-## Usage
+Without the desktop app, `doubletake` discovers receivers, lets you pick one
+and mirrors until you press Ctrl+C:
 
 ```sh
 # Discover Apple TVs on the network and stream
 doubletake
+
+# Share a single window instead of the whole screen (Wayland)
+doubletake -source window
 
 # Disable audio for video-only mirroring
 doubletake -no-audio
@@ -393,7 +186,11 @@ Main10 alone does not turn an SDR X11 or portal capture into HDR: doubletake
 preserves encoder-provided HDR SEI but does not invent PQ/HLG mastering metadata
 or relabel SDR colors as HDR.
 
-### Daemon Control (`doubletake-ctl`)
+## Daemon and `doubletake-ctl`
+
+`doubletake -daemonize` runs in the background and is controlled over a Unix
+socket by `doubletake-ctl`, the desktop app and the
+[KDE Plasma widget](plasmoid/). It can mirror to several receivers at once.
 
 ```sh
 doubletake-ctl status
@@ -424,6 +221,195 @@ maximum canvas and forms a separate group.
 Fan-out uses a bounded queue per target within each group. A
 stalled target is detached when its queue fills, without blocking peers that
 share the encoder. Other canvas groups continue independently as well.
+
+## Troubleshooting
+
+### Password-protected receivers
+
+If the receiver has **Require Password** enabled (on an Apple TV: Settings →
+AirPlay and HomeKit), it challenges the mirroring `SETUP` request with HTTP
+Digest auth and mirroring fails with `HTTP 401` until doubletake answers it.
+Pass the password with `-code`:
+
+```sh
+DOUBLETAKE_CODE='...' doubletake -target 192.168.1.77
+```
+
+`-code` carries whatever the receiver is asking for — the onscreen pairing PIN
+during `-pair`, or the fixed password when "Require Password" is enabled.
+`$DOUBLETAKE_CODE` is preferred over the flag: a command line is visible to
+other users via `ps` and lands in shell history. The environment variable takes
+precedence when both are set.
+
+Pairing and Digest authentication remain separate wire protocols, but
+doubletake deliberately uses one credential flow for both: a PIN/password
+entered during pairing is retained for later Digest challenges and reconnects.
+A receiver may consume that value during pairing, Digest auth, both, or neither.
+Supplying `-code` does not by itself trigger re-pairing.
+
+When the capability policy selects first-party CoreUtils/HAP pairing, a
+configured fixed password is reserved for Digest authentication and is never
+reused as an SRP pairing PIN, including with `-pair`. A legacy/HKP pairing flow
+may consume the same entered value during both SRP and Digest when its protocol
+requires it.
+
+The CLI and Plasma applet prompt once after inspecting the receiver's security
+mode. In the Plasma applet, an on-screen PIN uses a visible four-digit field,
+while a configured password uses an unrestricted masked field. Doubletake does
+not request or claim that a PIN is visible in password mode. The daemon exposes
+the distinction while retaining `doubletake-ctl pin <PIN-or-password>` for
+command compatibility when exactly one receiver is waiting. With concurrent
+prompts, submit each value with `doubletake-ctl connect TARGET PIN-or-password`.
+
+One thing that makes this confusing to diagnose: **"Require Password" is a
+fixed password you set, not a rotating onscreen code.** Nothing appears on the
+TV during `-pair`, and the prompt is asking for that configured password.
+
+Run with `-debug` to see the challenge and whether the retry was accepted.
+
+### Firewall
+
+doubletake binds three consecutive local UDP ports for each stream:
+
+- `N`: timing. A receiver-initiated NTP session probes this port during SETUP.
+- `N+1`: audio control and receiver retransmission requests.
+- `N+2`: outgoing audio data.
+
+PTP and sender-initiated NTP sessions do not require a new inbound timing
+connection, but the receiver can still send audio retransmission requests to
+the control port. The event and video data channels are outbound TCP
+connections from doubletake to ports returned by the receiver. Doubletake does
+not listen for inbound TCP connections.
+
+No router port forwarding or Internet exposure is needed. If the host firewall
+allows local-network traffic, no firewall configuration is necessary. With a
+default-deny host firewall, use `-port-range MIN-MAX` to replace unpredictable
+ephemeral UDP ports with a range you can allow from the receiver. The range
+must contain at least three ports:
+
+```sh
+doubletake -target 192.168.1.77 -port-range 60000-60010
+```
+
+Daemon mode uses the same range for every managed stream. Reserve at least
+three available ports per receiver that may stream simultaneously.
+
+For example, restrict a UFW rule to the receiver's address:
+
+```sh
+sudo ufw allow from 192.168.1.77 proto udp to any port 60000:60010
+```
+
+Add a rule for each receiver, or use the trusted LAN subnet as the source. For
+nftables/firewalld, add an equivalent inbound UDP rule for the selected source
+and range.
+
+NTP and PTP use the same presentation policy; the timing protocol only changes
+how timestamps are represented. In automatic mode, an ordinary connection uses
+a 75 ms video lead and an 85 ms screen-audio lead.
+
+## Tested devices
+
+
+These are devices that have been tested with doubletake. If there are devices not listed here that you have confirmed working or non-functional, please open an issue.
+
+- AppleTV3,2 (2013 3rd generation)
+- AppleTV11,1 (4K, 2021 2nd gen)
+- AppleTV14,1 (4K, 2022 3rd gen) + Homepod (1st gen)
+- AppleTV14,1 (4K, 2022 3rd gen)
+- Mac17,2 (MacBook Pro, M5 14")
+- Mac16,10 (Mac mini, M4)
+- Roku Streaming Stick 4K (3820R2)
+- Samsung TV TU8300 Series 4K UHD
+- TCL 55Q6C
+- Hisense 55A6QU
+- Xiaomi 4K HDR TV (AFTBR92D74) (currently non-functional, see [#4](https://github.com/omarroth/doubletake/issues/4))
+
+## Build from source
+
+Building needs Go 1.25+, the [runtime requirements](#runtime-requirements),
+and for the desktop app the GTK 4.14+ and GObject Introspection development
+files:
+
+```sh
+# Arch Linux
+sudo pacman -S go gtk4 gobject-introspection
+
+# Ubuntu/Debian
+sudo apt install golang-go libgtk-4-dev libgirepository1.0-dev
+```
+
+```sh
+make                     # builds bin/doubletake, doubletake-ctl, doubletake-ui, doubletake-test-receiver
+make test
+make install-user        # into ~/.local, no root (undo: make uninstall-user)
+sudo make install        # into /usr/local for all users (undo: sudo make uninstall)
+```
+
+The first build of `doubletake-ui` compiles the GTK bindings and takes several
+minutes; later builds are cached. `make ui-bundle` builds the release tarball
+locally. Packagers can stage with `make install DESTDIR=... PREFIX=/usr`.
+
+### Optional AAC-ELD support
+
+Doubletake selects screen audio from the receiver's advertised
+`supportedFormats.screenStream` mask. Default builds use the built-in ALAC
+encoder when the receiver advertises it. AAC-ELD remains an explicit opt-in
+because it depends on the system `libfdk-aac` development files and cgo:
+
+```sh
+CGO_ENABLED=1 go build -tags fdk_aac -o bin/doubletake ./cmd/doubletake
+```
+
+Install the package that provides the `fdk-aac` pkg-config file and headers for
+your distribution before running that command. A default build reports a clear
+error if advertised capabilities select AAC-ELD. A nonzero screen-audio mask
+which advertises neither ALAC nor AAC-ELD is also rejected instead of silently
+sending an unadvertised format. Use `-no-audio` to keep testing pairing, timing,
+and video when the advertised audio format is unavailable.
+
+## Features
+
+- Full AirPlay mirroring protocol (RTSP/HTTP + encrypted video stream)
+- FairPlay SAP authentication (clean Go implementation)
+- SRP-6a pairing with PIN and persistent credential storage
+- Wayland (PipeWire/xdg-desktop-portal) and X11 screen capture
+- H.264 encoding with NVENC, VA-API, OpenH264, and x264
+- Capability-gated HEVC Main10/high-resolution encoding with NVENC or x265
+- ChaCha20-Poly1305 stream encryption
+- mDNS device discovery
+- Daemon mode with multi-target streaming control (`doubletake-ctl`)
+- In-process test receiver for hardware-free pairing and media-flow tests
+- Automatic connection-aware screen/audio latency policy with an optional `-target-latency-ms` override
+- KDE Plasma widget for quick access (see [plasmoid/](plasmoid/))
+- GTK 4 desktop app and selectable capture source (this fork)
+
+## Releases
+
+Each [GitHub release](https://github.com/ValentinHerrmann/doubletake/releases)
+contains:
+
+- `doubletake`, `doubletake-ctl`, `doubletake-test-receiver`: static x86_64
+  binaries (`-arm64` suffix for aarch64)
+- `doubletake-ui`: x86_64 binary linked against the system GTK 4.14+
+  (`-arm64` suffix for aarch64)
+- `doubletake-ui-linux-amd64.tar.gz`, `doubletake-ui-linux-arm64.tar.gz`: the
+  desktop app bundle that the install script uses; it contains `install.sh`
+  (`./install.sh --uninstall` removes it)
+- `doubletake-manpages.tar.gz`
+- `SHA256SUMS`: verify downloads with `sha256sum -c --ignore-missing SHA256SUMS`
+
+Releases are cut only from `main`. Push an annotated `v*` tag on a commit on
+`main`; the [Release workflow](.github/workflows/release.yml) refuses other
+tags, runs the CI tests and builds, then publishes the release with the tag
+message as its notes, followed by the install commands. Tags with a `-`
+(e.g. `v0.7.0-rc1`) become pre-releases.
+
+```sh
+git switch main && git pull
+git tag -a v0.7.0 -m "doubletake v0.7.0: ..."
+git push origin v0.7.0
+```
 
 ## Disclaimer
 
