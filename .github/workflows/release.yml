@@ -53,7 +53,7 @@ jobs:
         run: |
           # Re-fetch the tag to ensure the annotated tag object is present
           git fetch origin tag "${GITHUB_REF_NAME}" --force --no-tags
-          NOTES=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
+          NOTES=$(git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}")
           if [ -z "$NOTES" ]; then
             NOTES=$(git log -1 --format='%B' "${GITHUB_REF_NAME}")
           fi
