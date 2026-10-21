@@ -108,6 +108,14 @@ func main() {
 	airplay.SetDebugMode(*debug)
 
 	if *daemonize {
+		// The daemon keeps its historical monitor-only default (and saved
+		// screen choice) unless -source is given explicitly.
+		daemonSource := uint32(0)
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "source" {
+				daemonSource = sourceTypes
+			}
+		})
 		runDaemon(daemon.Config{
 			SocketPath:  *socketPath,
 			CredFile:    *credFile,
@@ -124,6 +132,7 @@ func main() {
 			DirectKey:   *directKey,
 			NoAudio:     *noAudio,
 			ShowCursor:  !*noCursor,
+			SourceTypes: daemonSource,
 			Code:        credential,
 		})
 		return

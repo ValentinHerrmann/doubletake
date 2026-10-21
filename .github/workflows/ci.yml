@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # doubletake-ui links GTK 4; setup-go caches the slow first cgo build.
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
       - run: make test
 
   build:
@@ -36,6 +38,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Install GTK 4
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
 
       - name: Build doubletake
         run: make doubletake-release

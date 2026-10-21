@@ -6,5 +6,6 @@ Comment=Mirror your screen or a window to an Apple TV or AirPlay receiver
 Exec=doubletake-ui
 Icon=doubletake
 Terminal=false
+StartupWMClass=org.doubletake.UI
 Categories=AudioVideo;Video;
 Keywords=AirPlay;Apple TV;mirror;cast;projector;

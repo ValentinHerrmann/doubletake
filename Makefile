@@ -1,4 +1,4 @@
-.PHONY: need-go all build doubletake doubletake-ctl doubletake-ui doubletake-test-receiver doubletake-release doubletake-ui-release doubletake-ctl-release doubletake-test-receiver-release manpages-release ui-bundle install install-bin install-man install-desktop install-user uninstall uninstall-user test clean
+.PHONY: need-go need-gtk all build doubletake doubletake-ctl doubletake-ui doubletake-test-receiver doubletake-release doubletake-ui-release doubletake-ctl-release doubletake-test-receiver-release manpages-release ui-bundle install install-bin install-man install-desktop install-user uninstall uninstall-user test clean
 
 PREFIX ?= /usr/local
 DESTDIR ?=
@@ -9,10 +9,16 @@ MANDIR ?= $(DATADIR)/man
 ARCH := $(shell go env GOARCH 2>/dev/null)
 BUNDLE := doubletake-ui-linux-$(ARCH)
 RELEASE_FLAGS := -ldflags='-s -w -extldflags=-static'
+# doubletake-ui links the system GTK4 (cgo), so it cannot be static.
+UI_RELEASE_FLAGS := -ldflags='-s -w'
 
 # Building needs the Go toolchain (go.mod sets the minimum version).
 need-go:
 	@command -v go >/dev/null || { echo "error: Go is not installed; install it first (Arch: sudo pacman -S go, Debian/Ubuntu: sudo apt install golang-go)" >&2; exit 1; }
+
+# doubletake-ui needs the GTK 4 development files (4.14 or newer).
+need-gtk:
+	@pkg-config --exists 'gtk4 >= 4.14' || { echo "error: GTK 4.14+ development files not found (Arch: sudo pacman -S gtk4, Debian/Ubuntu: sudo apt install libgtk-4-dev)" >&2; exit 1; }
 
 all: doubletake doubletake-ctl doubletake-ui doubletake-test-receiver
 
@@ -24,7 +30,7 @@ doubletake: need-go
 doubletake-ctl: need-go
 	go build -o bin/doubletake-ctl ./cmd/doubletake-ctl
 
-doubletake-ui: need-go
+doubletake-ui: need-go need-gtk
 	go build -o bin/doubletake-ui ./cmd/doubletake-ui
 
 doubletake-test-receiver: need-go
@@ -36,8 +42,8 @@ doubletake-release: need-go
 doubletake-ctl-release: need-go
 	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -o doubletake-ctl ./cmd/doubletake-ctl
 
-doubletake-ui-release: need-go
-	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -o doubletake-ui ./cmd/doubletake-ui
+doubletake-ui-release: need-go need-gtk
+	CGO_ENABLED=1 go build $(UI_RELEASE_FLAGS) -o doubletake-ui ./cmd/doubletake-ui
 
 doubletake-test-receiver-release: need-go
 	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -o doubletake-test-receiver ./cmd/doubletake-test-receiver
@@ -45,13 +51,14 @@ doubletake-test-receiver-release: need-go
 manpages-release:
 	tar -czf doubletake-manpages.tar.gz -C man man1
 
-# Self-contained desktop app tarball: static binaries, desktop entry, icon and
-# an install.sh that installs to ~/.local without root.
-ui-bundle: need-go
+# Desktop app tarball: binaries, desktop entry, icon and an install.sh that
+# installs to ~/.local without root. doubletake is static; doubletake-ui needs
+# the system GTK 4.
+ui-bundle: need-go need-gtk
 	rm -rf dist/$(BUNDLE)
 	install -d dist/$(BUNDLE)/bin
 	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -o dist/$(BUNDLE)/bin/doubletake ./cmd/doubletake
-	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -o dist/$(BUNDLE)/bin/doubletake-ui ./cmd/doubletake-ui
+	CGO_ENABLED=1 go build $(UI_RELEASE_FLAGS) -o dist/$(BUNDLE)/bin/doubletake-ui ./cmd/doubletake-ui
 	cp -r share dist/$(BUNDLE)/
 	install -m 755 packaging/install.sh dist/$(BUNDLE)/
 	tar -czf $(BUNDLE).tar.gz -C dist $(BUNDLE)

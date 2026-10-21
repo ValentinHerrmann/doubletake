@@ -124,25 +124,31 @@ and video when the advertised audio format is unavailable.
 
 ## Desktop UI
 
-`doubletake-ui` is a small graphical front end for the `doubletake` CLI. It
-opens an app window (Chrome/Chromium, served from `127.0.0.1`) that lists the
-AirPlay receivers on the network, asks for the PIN when a receiver shows one,
-and starts or stops mirroring. **Refresh** restarts discovery, which helps when
-a receiver was missed. The **Screen / Window / Ask** switch chooses what the
-screen-sharing dialog offers (`-source monitor|window|any`).
+`doubletake-ui` is a small native GTK 4 front end for the doubletake daemon.
+Its window lists the AirPlay receivers on the network (discovery runs
+continuously), asks for the PIN or password when a receiver needs one, and
+starts or stops mirroring. The **Screen / Window / Ask** switch chooses what
+the screen-sharing dialog offers for the next connection
+(`-source monitor|window|any`).
 
 ```sh
-doubletake-ui                         # opens the window, starts searching
+doubletake-ui                         # opens the window
 doubletake-ui -source window -no-audio
-doubletake-ui -no-window              # print the URL instead of opening a window
 ```
 
-It uses the `doubletake` binary next to itself (or `doubletake-src`, then
-`doubletake` on `PATH`; override with `-doubletake <path>`). Only one instance
-runs per user: starting it again opens another window to the running instance
-and, with `-source`, switches its capture source. It exits about 30 seconds
-after its window is closed unless a cast is running. `make install` also
-installs a `Doubletake` desktop entry.
+It talks to the daemon over its control socket, the same interface that
+`doubletake-ctl` and the Plasma widget use. If no daemon is running, it starts
+`doubletake -daemonize` from the binary next to itself (or `doubletake-src`,
+then `doubletake` on `PATH`; override with `-doubletake <path>`). `-no-audio`
+applies only to a daemon the UI starts. The daemon keeps running after the
+window is closed, so a cast continues; stop it with **Stop casting**,
+`doubletake-ctl disconnect`, or by ending the daemon. Only one window runs per
+user: starting the UI again raises it and, with `-source`, switches its capture
+source. `make install` also installs a `Doubletake` desktop entry.
+
+Building it needs the GTK 4.14+ development files (`libgtk-4-dev` on
+Debian/Ubuntu, `gtk4` on Arch). The first build compiles the GTK bindings and
+takes several minutes; later builds are cached.
 
 ### Installing the desktop app
 
@@ -163,9 +169,8 @@ tar -xzf doubletake-ui-linux-amd64.tar.gz
 ./doubletake-ui-linux-amd64/install.sh               # ./install.sh --uninstall removes it
 ```
 
-The GStreamer packages from [Requirements](#requirements) are still needed at
-runtime. Chrome or Chromium gives the UI its own app window; without them it
-opens in the default browser. `make ui-bundle` builds the tarball locally.
+The GStreamer packages from [Requirements](#requirements) and GTK 4.14 or
+newer are needed at runtime. `make ui-bundle` builds the tarball locally.
 Packagers can stage with `make install DESTDIR=... PREFIX=/usr`.
 
 ## Releases
@@ -173,8 +178,10 @@ Packagers can stage with `make install DESTDIR=... PREFIX=/usr`.
 Each [GitHub release](https://github.com/ValentinHerrmann/doubletake/releases)
 contains:
 
-- `doubletake`, `doubletake-ctl`, `doubletake-ui`, `doubletake-test-receiver`:
-  static x86_64 binaries (`-arm64` suffix for aarch64)
+- `doubletake`, `doubletake-ctl`, `doubletake-test-receiver`: static x86_64
+  binaries (`-arm64` suffix for aarch64)
+- `doubletake-ui`: x86_64 binary linked against the system GTK 4.14+
+  (`-arm64` suffix for aarch64)
 - `doubletake-ui-linux-amd64.tar.gz`, `doubletake-ui-linux-arm64.tar.gz`: the
   desktop app bundle with `install.sh` (see [Installing the desktop app](#installing-the-desktop-app))
 - `doubletake-manpages.tar.gz`
@@ -348,6 +355,7 @@ doubletake-ctl disconnect
 | `-no-audio` | false | Disable audio streaming |
 | `-test` | false | Use synthetic video source |
 | `-daemonize` | false | Run as background daemon with Unix socket control interface |
+| `-source` | `any` | Wayland capture source offered by the screen-sharing dialog: `any`, `monitor` (remembers the chosen screen) or `window`. With `-daemonize` the default stays `monitor`; a daemon `connect` request may set its own `source` |
 | `-socket` | `$XDG_RUNTIME_DIR/doubletake.sock` | Daemon control socket path |
 | `-debug` | false | Verbose debug logging |
 

@@ -41,7 +41,13 @@ func (c *Client) Devices() (*daemon.Response, error) {
 
 // Connect starts mirroring to the specified target (or first discovered device if empty).
 func (c *Client) Connect(target string, port int, pin string) (*daemon.Response, error) {
-	return c.send(daemon.Request{Cmd: "connect", Target: target, Port: port, Pin: pin})
+	return c.ConnectWithSource(target, port, pin, "")
+}
+
+// ConnectWithSource is Connect with a capture source ("any", "monitor" or
+// "window"); empty uses the daemon's default.
+func (c *Client) ConnectWithSource(target string, port int, pin, source string) (*daemon.Response, error) {
+	return c.send(daemon.Request{Cmd: "connect", Target: target, Port: port, Pin: pin, Source: source})
 }
 
 // Disconnect stops all active mirroring sessions.

@@ -25,7 +25,7 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 install -d "$BINDIR" "$APPDIR" "$ICONDIR"
-# doubletake-ui runs the doubletake next to it.
+# doubletake-ui starts the doubletake daemon next to it.
 install -m 755 "$HERE/bin/doubletake" "$HERE/bin/doubletake-ui" "$BINDIR/"
 # Absolute Exec: desktop sessions often lack ~/.local/bin on PATH.
 sed "s|^Exec=doubletake-ui|Exec=$BINDIR/doubletake-ui|" "$HERE/share/applications/doubletake-ui.desktop" >"$APPDIR/doubletake-ui.desktop"
@@ -38,10 +38,6 @@ echo "Doubletake installed to $PREFIX. Start it from your app menu or run $BINDI
 if ! command -v gst-launch-1.0 >/dev/null; then
 	echo "warning: GStreamer not found; install GStreamer 1.0 with the base/good/bad/ugly/libav plugins (see README)." >&2
 fi
-found=
-for b in google-chrome google-chrome-stable chromium chromium-browser; do
-	if command -v "$b" >/dev/null; then found=1; break; fi
-done
-if [ -z "$found" ]; then
-	echo "note: Chrome/Chromium not found; the UI will open in your default browser instead of an app window." >&2
+if ! ldconfig -p 2>/dev/null | grep -q 'libgtk-4\.so\.1'; then
+	echo "warning: GTK 4 not found; install it to run doubletake-ui (Arch: gtk4, Debian/Ubuntu: libgtk-4-1)." >&2
 fi
