@@ -144,6 +144,52 @@ and, with `-source`, switches its capture source. It exits about 30 seconds
 after its window is closed unless a cast is running. `make install` also
 installs a `Doubletake` desktop entry.
 
+### Installing the desktop app
+
+Each install adds a **Doubletake** entry with its own icon to the app menu.
+
+```sh
+make install-user        # into ~/.local, no root needed (undo: make uninstall-user)
+sudo make install        # into /usr/local for all users
+```
+
+Without a Go toolchain, download `doubletake-ui-linux-amd64.tar.gz` (or
+`-arm64`) from the [latest release](https://github.com/ValentinHerrmann/doubletake/releases/latest)
+and run its installer (also into `~/.local`):
+
+```sh
+curl -LO https://github.com/ValentinHerrmann/doubletake/releases/latest/download/doubletake-ui-linux-amd64.tar.gz
+tar -xzf doubletake-ui-linux-amd64.tar.gz
+./doubletake-ui-linux-amd64/install.sh               # ./install.sh --uninstall removes it
+```
+
+The GStreamer packages from [Requirements](#requirements) are still needed at
+runtime. Chrome or Chromium gives the UI its own app window; without them it
+opens in the default browser. `make ui-bundle` builds the tarball locally.
+Packagers can stage with `make install DESTDIR=... PREFIX=/usr`.
+
+## Releases
+
+Each [GitHub release](https://github.com/ValentinHerrmann/doubletake/releases)
+contains:
+
+- `doubletake`, `doubletake-ctl`, `doubletake-ui`, `doubletake-test-receiver`:
+  static x86_64 binaries (`-arm64` suffix for aarch64)
+- `doubletake-ui-linux-amd64.tar.gz`, `doubletake-ui-linux-arm64.tar.gz`: the
+  desktop app bundle with `install.sh` (see [Installing the desktop app](#installing-the-desktop-app))
+- `doubletake-manpages.tar.gz`
+- `SHA256SUMS`: verify downloads with `sha256sum -c --ignore-missing SHA256SUMS`
+
+To publish a release, push an annotated `v*` tag. The
+[Release workflow](.github/workflows/release.yml) runs the CI tests and builds,
+then creates the release with the tag message as its notes. Tags with a `-`
+(e.g. `v0.4.0-rc1`) become pre-releases.
+
+```sh
+git tag -a v0.4.0 -m "doubletake v0.4.0: desktop UI"
+git push origin v0.4.0
+```
+
 ## Firewall
 
 doubletake binds three consecutive local UDP ports for each stream:
