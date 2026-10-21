@@ -1,0 +1,67 @@
+name: Release
+
+# Push a tag like v1.2.3 to publish a GitHub release with the binaries, the
+# desktop app bundles and checksums. Notes come from the annotated tag message.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    runs-on: ubuntu-latest
+    needs: ci
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets*
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          sha256sum doubletake doubletake-ctl doubletake-test-receiver doubletake-ui \
+            doubletake-arm64 doubletake-ctl-arm64 doubletake-test-receiver-arm64 doubletake-ui-arm64 \
+            doubletake-ui-linux-*.tar.gz doubletake-manpages.tar.gz > SHA256SUMS
+
+      - name: Extract release notes from tag
+        id: notes
+        run: |
+          # Re-fetch the tag to ensure the annotated tag object is present
+          git fetch origin tag "${GITHUB_REF_NAME}" --force --no-tags
+          NOTES=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
+          if [ -z "$NOTES" ]; then
+            NOTES=$(git log -1 --format='%B' "${GITHUB_REF_NAME}")
+          fi
+          {
+            echo 'RELEASE_NOTES<<EOF'
+            echo "$NOTES"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.RELEASE_NOTES }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            doubletake
+            doubletake-ctl
+            doubletake-test-receiver
+            doubletake-ui
+            doubletake-arm64
+            doubletake-ctl-arm64
+            doubletake-test-receiver-arm64
+            doubletake-ui-arm64
+            doubletake-ui-linux-*.tar.gz
+            doubletake-manpages.tar.gz
+            SHA256SUMS

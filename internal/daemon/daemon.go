@@ -45,6 +45,9 @@ type Request struct {
 	Target string `json:"target,omitempty"`
 	Port   int    `json:"port,omitempty"`
 	Pin    string `json:"pin,omitempty"`
+	// Source selects the capture source for a new connection: "any",
+	// "monitor" or "window". Empty uses the daemon's configured source.
+	Source string `json:"source,omitempty"`
 }
 
 // StreamInfo describes one active (or connecting) mirror stream.
@@ -101,6 +104,7 @@ type Config struct {
 	DirectKey   bool
 	NoAudio     bool
 	ShowCursor  bool
+	SourceTypes uint32 // default portal source-type mask; zero means airplay.SourceMonitor
 	Code        string // default pairing/Digest credential; request Pin overrides it
 }
 
@@ -213,15 +217,17 @@ type activeStream struct {
 	cancelFn       context.CancelFunc
 	credentialCh   chan string
 	credentialKind CredentialKind
+	sourceTypes    uint32 // portal source-type mask requested for this stream
 }
 
 // videoCaptureKey identifies captures which can safely share one encoded
-// stream. Capture settings are daemon-wide, so only the receiver's nominal
-// canvas and codec vary between concurrent targets.
+// stream. Other capture settings are daemon-wide, so only the receiver's
+// nominal canvas, codec and requested capture source vary between targets.
 type videoCaptureKey struct {
-	maxWidth  int
-	maxHeight int
-	codec     airplay.VideoCodec
+	maxWidth    int
+	maxHeight   int
+	codec       airplay.VideoCodec
+	sourceTypes uint32
 }
 
 // videoCaptureGroup owns one capture/encoder and its byte-stream fan-out. A
@@ -698,6 +704,21 @@ func (d *Daemon) handleDevices() Response {
 }
 
 func (d *Daemon) handleConnect(req Request) Response {
+	sourceTypes := d.cfg.SourceTypes
+	if req.Source != "" {
+		parsed, err := airplay.ParseSource(req.Source)
+		if err != nil {
+			d.mu.Lock()
+			state := d.overallStateLocked()
+			d.mu.Unlock()
+			return Response{OK: false, State: state, Error: err.Error()}
+		}
+		sourceTypes = parsed
+	}
+	if sourceTypes == 0 {
+		sourceTypes = airplay.SourceMonitor
+	}
+
 	d.mu.Lock()
 	if d.shuttingDown {
 		d.mu.Unlock()
@@ -786,6 +807,7 @@ func (d *Daemon) handleConnect(req Request) Response {
 		state:        StateConnecting,
 		cancelFn:     cancel,
 		credentialCh: make(chan string, 1),
+		sourceTypes:  sourceTypes,
 	}
 	d.clearLastErrorForTargetLocked(target)
 	d.streams[target] = entry
@@ -932,8 +954,10 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 
 	deviceID := info.DeviceID
 	savedCreds := d.credStore.Lookup(deviceID)
+	// The saved restore token remembers a monitor choice; reusing it for
+	// another source type would silently skip the picker.
 	screenCastRestoreToken := ""
-	if savedCreds != nil {
+	if savedCreds != nil && monitorSource(entry.sourceTypes) {
 		screenCastRestoreToken = savedCreds.RestoreToken
 	}
 
@@ -1115,7 +1139,7 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 	// not start an encoder until control SETUP exposes session-time display info.
 	// This preserves the receiver deadline while avoiding the provisional 720p
 	// fallback used by receivers whose public /info omits displays.
-	capturePreparation, err := d.prepareVideoCapture(ctx, screenCastRestoreToken, deviceID)
+	capturePreparation, err := d.prepareVideoCapture(ctx, entry.sourceTypes, screenCastRestoreToken, deviceID)
 	if err != nil {
 		removeStream(fmt.Sprintf("prepare capture failed: %v", err))
 		return
@@ -1150,10 +1174,10 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 		if startErr != nil {
 			if streamCfg.VideoCodec == airplay.VideoCodecAuto && codec == airplay.VideoCodecHEVC {
 				restoreToken := screenCastRestoreToken
-				if saved := d.credStore.Lookup(deviceID); saved != nil && saved.RestoreToken != "" {
+				if saved := d.credStore.Lookup(deviceID); saved != nil && saved.RestoreToken != "" && monitorSource(entry.sourceTypes) {
 					restoreToken = saved.RestoreToken
 				}
-				replacement, fallbackErr := d.prepareVideoCapture(ctx, restoreToken, deviceID, airplay.VideoCodecH264)
+				replacement, fallbackErr := d.prepareVideoCapture(ctx, entry.sourceTypes, restoreToken, deviceID, airplay.VideoCodecH264)
 				if fallbackErr != nil {
 					return airplay.VideoPreparationResult{}, fmt.Errorf("%v; prepare H.264 fallback: %w", startErr, fallbackErr)
 				}
@@ -1296,6 +1320,13 @@ func retryMirrorSetupAfterDigestChallenge(
 	return retrySetup()
 }
 
+// monitorSource reports whether a portal source-type mask offers only
+// monitors (zero means monitor). Only then is a saved restore token, which
+// remembers a monitor choice, safe to reuse.
+func monitorSource(sourceTypes uint32) bool {
+	return sourceTypes == 0 || sourceTypes == airplay.SourceMonitor
+}
+
 // normalizedVideoCaptureKey matches the even canvas which the capture pipeline
 // will actually encode. Invalid or incomplete dimensions share the unconstrained
 // group instead of accidentally constraining one axis only.
@@ -1315,7 +1346,7 @@ func normalizedVideoCaptureKey(maxW, maxH int, codecs ...airplay.VideoCodec) vid
 // reveals the session-time display canvas. Portal serialization is deliberately
 // separate from captureStartMu: a different user prompt must not block an
 // already-negotiated receiver from starting its encoder before its deadline.
-func (d *Daemon) prepareVideoCapture(ctx context.Context, restoreToken, deviceID string, codecs ...airplay.VideoCodec) (*airplay.CapturePreparation, error) {
+func (d *Daemon) prepareVideoCapture(ctx context.Context, sourceTypes uint32, restoreToken, deviceID string, codecs ...airplay.VideoCodec) (*airplay.CapturePreparation, error) {
 	d.capturePortalMu.Lock()
 	defer d.capturePortalMu.Unlock()
 
@@ -1329,9 +1360,10 @@ func (d *Daemon) prepareVideoCapture(ctx context.Context, restoreToken, deviceID
 		HWAccel:      d.cfg.HWAccel,
 		VideoCodec:   codec,
 		ShowCursor:   d.cfg.ShowCursor,
+		SourceTypes:  sourceTypes,
 		RestoreToken: restoreToken,
 	}
-	if deviceID != "" {
+	if deviceID != "" && monitorSource(sourceTypes) {
 		cfg.SaveRestoreToken = func(token string) error {
 			return d.credStore.SaveRestoreToken(deviceID, token)
 		}
@@ -1351,6 +1383,7 @@ func (d *Daemon) getOrStartPreparedCaptureGroup(ctx context.Context, entry *acti
 	defer d.captureStartMu.Unlock()
 
 	key := normalizedVideoCaptureKey(width, height, codec)
+	key.sourceTypes = entry.sourceTypes
 	d.mu.Lock()
 	if d.streams[entry.deviceIP] != entry {
 		d.mu.Unlock()
@@ -1457,6 +1490,7 @@ func (d *Daemon) getOrStartCaptureGroup(entry *activeStream, restoreToken, devic
 		codec = airplay.VideoCodecH264
 	}
 	key := normalizedVideoCaptureKey(maxW, maxH, codec)
+	key.sourceTypes = entry.sourceTypes
 	d.mu.Lock()
 	if d.streams[entry.deviceIP] != entry {
 		d.mu.Unlock()
@@ -1492,6 +1526,7 @@ func (d *Daemon) getOrStartCaptureGroup(entry *activeStream, restoreToken, devic
 		MaxWidth:     key.maxWidth,
 		MaxHeight:    key.maxHeight,
 		ShowCursor:   d.cfg.ShowCursor,
+		SourceTypes:  entry.sourceTypes,
 		RestoreToken: restoreToken,
 	}
 	if deviceID != "" {

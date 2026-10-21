@@ -43,8 +43,32 @@ type CaptureConfig struct {
 
 	ShowCursor bool // show the mouse cursor in the captured video (Wayland and X11)
 
+	// SourceTypes is the Wayland portal source-type mask offered in the picker
+	// (SourceMonitor, SourceWindow). Zero means SourceMonitor.
+	SourceTypes uint32
+
 	RestoreToken     string
 	SaveRestoreToken func(string) error
+}
+
+// xdg-desktop-portal ScreenCast source types.
+const (
+	SourceMonitor uint32 = 1
+	SourceWindow  uint32 = 2
+)
+
+// ParseSource maps a -source value to a portal source-type mask.
+func ParseSource(source string) (uint32, error) {
+	switch source {
+	case "monitor":
+		return SourceMonitor, nil
+	case "window":
+		return SourceWindow, nil
+	case "", "any":
+		return SourceMonitor | SourceWindow, nil
+	default:
+		return 0, fmt.Errorf("unknown source %q (want any, monitor, or window)", source)
+	}
 }
 
 // ValidateHWAccel checks a capture encoder preference. An empty value keeps the
@@ -278,7 +302,7 @@ func PrepareCapture(ctx context.Context, cfg CaptureConfig) (*CapturePreparation
 	if err := probeWaylandDisplay(ctx, os.Getenv("WAYLAND_DISPLAY")); err != nil {
 		return nil, err
 	}
-	nodeID, pwFd, portal, restoreToken, err := requestScreencast(ctx, cfg.RestoreToken, cfg.ShowCursor, &preparation.streamSize)
+	nodeID, pwFd, portal, restoreToken, err := requestScreencast(ctx, cfg.RestoreToken, cfg.ShowCursor, cfg.SourceTypes, &preparation.streamSize)
 	if err != nil {
 		return nil, fmt.Errorf("screencast portal: %w", err)
 	}
@@ -2436,7 +2460,7 @@ func normalizeContext(ctx context.Context) context.Context {
 // permission and returns a PipeWire node ID, an fd for the portal's PipeWire remote,
 // the retained portal session (which must stay open for capture and retries), and a
 // fresh restore token when the portal grants persistence.
-func requestScreencast(ctx context.Context, restoreToken string, showCursor bool, dimensions *[2]int) (uint32, *os.File, pipeWirePortalSession, string, error) {
+func requestScreencast(ctx context.Context, restoreToken string, showCursor bool, sourceTypes uint32, dimensions *[2]int) (uint32, *os.File, pipeWirePortalSession, string, error) {
 	ctx = normalizeContext(ctx)
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
@@ -2510,7 +2534,11 @@ func requestScreencast(ctx context.Context, restoreToken string, showCursor bool
 		cursorMode = 2
 	}
 
-	// Select sources (screen)
+	if sourceTypes == 0 {
+		sourceTypes = SourceMonitor
+	}
+
+	// Select sources
 	selectToken := baseToken + "_select"
 	selectPath, err := portalPathForToken(conn, portalRequestPathPrefix, selectToken)
 	if err != nil {
@@ -2518,7 +2546,7 @@ func requestScreencast(ctx context.Context, restoreToken string, showCursor bool
 	}
 	selectOpts := map[string]dbus.Variant{
 		"handle_token": dbus.MakeVariant(selectToken),
-		"types":        dbus.MakeVariant(uint32(1)), // MONITOR=1, WINDOW=2
+		"types":        dbus.MakeVariant(sourceTypes), // MONITOR=1, WINDOW=2
 		"multiple":     dbus.MakeVariant(false),
 		"cursor_mode":  dbus.MakeVariant(cursorMode),
 	}

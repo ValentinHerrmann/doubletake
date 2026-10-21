@@ -80,12 +80,17 @@ func main() {
 	x11WindowID := flag.String("x11-window-id", "", "X11 window id to capture, decimal or 0xhex")
 	x11WindowName := flag.String("x11-window-name", "", "X11 window name to capture; prefer -x11-window-id")
 	noCursor := flag.Bool("no-cursor", false, "Don't show the mouse cursor in the captured video")
+	source := flag.String("source", "any", "Wayland capture source: any (picker offers screens and windows), monitor (remembers the chosen screen), or window")
 	flag.Parse()
 	if err := airplay.ValidateHWAccel(*hwaccel); err != nil {
 		log.Fatalf("invalid -hwaccel: %v", err)
 	}
 	if err := airplay.ValidateVideoCodec(*videoCodec); err != nil {
 		log.Fatalf("invalid -video-codec: %v", err)
+	}
+	sourceTypes, err := airplay.ParseSource(*source)
+	if err != nil {
+		log.Fatalf("invalid -source: %v", err)
 	}
 	portMin, portMax, err := parsePortRange(*portRange)
 	if err != nil {
@@ -103,6 +108,14 @@ func main() {
 	airplay.SetDebugMode(*debug)
 
 	if *daemonize {
+		// The daemon keeps its historical monitor-only default (and saved
+		// screen choice) unless -source is given explicitly.
+		daemonSource := uint32(0)
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "source" {
+				daemonSource = sourceTypes
+			}
+		})
 		runDaemon(daemon.Config{
 			SocketPath:  *socketPath,
 			CredFile:    *credFile,
@@ -119,6 +132,7 @@ func main() {
 			DirectKey:   *directKey,
 			NoAudio:     *noAudio,
 			ShowCursor:  !*noCursor,
+			SourceTypes: daemonSource,
 			Code:        credential,
 		})
 		return
@@ -346,6 +360,7 @@ func main() {
 		X11WindowID:   xid,
 		X11WindowName: *x11WindowName,
 		ShowCursor:    !*noCursor,
+		SourceTypes:   sourceTypes,
 	}
 	if *testMode {
 		if *noAudio {
@@ -358,13 +373,17 @@ func main() {
 		if *testMode {
 			return airplay.PrepareTestCapture(ctx, cfg)
 		}
-		restoreToken := ""
-		if creds := credStore.Lookup(info.DeviceID); creds != nil {
-			restoreToken = creds.RestoreToken
-		}
-		cfg.RestoreToken = restoreToken
-		cfg.SaveRestoreToken = func(token string) error {
-			return credStore.SaveRestoreToken(info.DeviceID, token)
+		// The saved restore token remembers a monitor choice; reusing it for
+		// another source type would silently skip the picker.
+		if cfg.SourceTypes == airplay.SourceMonitor {
+			restoreToken := ""
+			if creds := credStore.Lookup(info.DeviceID); creds != nil {
+				restoreToken = creds.RestoreToken
+			}
+			cfg.RestoreToken = restoreToken
+			cfg.SaveRestoreToken = func(token string) error {
+				return credStore.SaveRestoreToken(info.DeviceID, token)
+			}
 		}
 		return airplay.PrepareCapture(ctx, cfg)
 	}
