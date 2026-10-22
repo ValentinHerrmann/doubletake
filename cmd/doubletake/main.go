@@ -81,6 +81,7 @@ func main() {
 	x11WindowName := flag.String("x11-window-name", "", "X11 window name to capture; prefer -x11-window-id")
 	noCursor := flag.Bool("no-cursor", false, "Don't show the mouse cursor in the captured video")
 	source := flag.String("source", "any", "Wayland capture source: any (picker offers screens and windows), monitor (remembers the chosen screen), or window")
+	miracastTarget := flag.String("miracast", "", "Experimental: mirror to a Miracast display over Wi-Fi Direct; \"list\" searches for displays, otherwise the display's P2P address")
 	flag.Parse()
 	if err := airplay.ValidateHWAccel(*hwaccel); err != nil {
 		log.Fatalf("invalid -hwaccel: %v", err)
@@ -146,6 +147,11 @@ func main() {
 		log.Fatalf("invalid -x11-window-id: %v", err)
 	}
 
+	// Ctrl+C on "doubletake | tee log" also stops tee. Without this, the next
+	// log write would kill the process with SIGPIPE before it tears down the
+	// receiver session; a Miracast display then refuses new sessions until it
+	// is power-cycled.
+	signal.Ignore(syscall.SIGPIPE)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -163,6 +169,22 @@ func main() {
 		log.Println("forced exit")
 		os.Exit(1)
 	}()
+
+	if *miracastTarget != "" {
+		err := runMiracast(ctx, *miracastTarget, airplay.CaptureConfig{
+			FPS:           *fps,
+			Bitrate:       *bitrate,
+			HWAccel:       *hwaccel,
+			X11WindowID:   xid,
+			X11WindowName: *x11WindowName,
+			ShowCursor:    !*noCursor,
+			SourceTypes:   sourceTypes,
+		}, *testMode, *noAudio)
+		if err != nil {
+			log.Fatalf("miracast: %v", err)
+		}
+		return
+	}
 
 	var addr string
 	var advertisement *airplay.AirPlayDevice

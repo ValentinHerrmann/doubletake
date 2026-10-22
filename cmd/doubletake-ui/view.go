@@ -87,6 +87,22 @@ func buildView(status, devices *daemon.Response, pollErr error, actionErr string
 	return v
 }
 
+// deviceDetail is the secondary line of a receiver row: its protocol, then
+// the model and address for AirPlay. A Miracast target is not an address.
+func deviceDetail(d daemon.DeviceInfo) string {
+	if d.Protocol == "miracast" {
+		return "Miracast"
+	}
+	parts := []string{"AirPlay"}
+	if d.Model != "" {
+		parts = append(parts, d.Model)
+	}
+	if d.IP != "" {
+		parts = append(parts, d.IP)
+	}
+	return strings.Join(parts, " · ")
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if v != "" {

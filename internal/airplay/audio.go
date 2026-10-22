@@ -31,6 +31,10 @@ const (
 	AudioCodecALAC   AudioCodec = 2 // ct=2, spf=352, audioFormat=0x40000
 	AudioCodecAACELD AudioCodec = 8 // ct=8, spf=480, audioFormat=0x1000000
 
+	// AudioCodecPCM48 is not an AirPlay codec. It delivers unencoded 48 kHz
+	// stereo S16LE in 10 ms frames for senders that carry raw LPCM (Miracast).
+	AudioCodecPCM48 AudioCodec = 0x100
+
 	audioSecurityLegacyAES audioSecurityMode = iota
 	audioSecurityChaCha
 
@@ -95,6 +99,9 @@ func (c AudioCodec) Info() (ct int64, spf int64, audioFormat int64, latencyMin i
 	if c == AudioCodecAACELD {
 		return int64(AudioCodecAACELD), 480, 0x1000000, 0, int64(latency), latency
 	}
+	if c == AudioCodecPCM48 {
+		return int64(AudioCodecPCM48), 480, 0, 0, 0, 0
+	}
 	return 2, 352, 0x40000, 0, int64(latency), latency
 }
 
@@ -153,11 +160,21 @@ func supportsTimestampedAudioOutput() bool {
 	return true
 }
 
+// sampleRate is the capture rate for codec: the AirPlay rate, or 48 kHz for
+// raw Miracast LPCM.
+func (c AudioCodec) sampleRate() int64 {
+	if c == AudioCodecPCM48 {
+		return 48000
+	}
+	return audioSampleRate
+}
+
 func audioCaptureFragmentTime(codec AudioCodec) time.Duration {
 	_, codecSPF, _, _, _, _ := codec.Info()
+	rate := codec.sampleRate()
 	// Pulse properties use whole microseconds. Round up so the requested source
 	// callback never contains less than one codec frame.
-	microseconds := (codecSPF*int64(time.Second/time.Microsecond) + audioSampleRate - 1) / audioSampleRate
+	microseconds := (codecSPF*int64(time.Second/time.Microsecond) + rate - 1) / rate
 	return time.Duration(microseconds) * time.Microsecond
 }
 
@@ -190,6 +207,7 @@ func selectAudioMonitorSource(hasPulse bool, monitor string, hasPipeWire bool, c
 
 func audioCapturePipelineArgs(srcArgs []string, codec AudioCodec, timestamped bool) []string {
 	_, codecSPF, _, _, _, _ := codec.Info()
+	rate := codec.sampleRate()
 	format := "S16LE"
 	if timestamped {
 		// RTP L16 is network byte order. The framed reader restores S16LE before
@@ -200,7 +218,7 @@ func audioCapturePipelineArgs(srcArgs []string, codec AudioCodec, timestamped bo
 	args = append(args,
 		"!", "audioconvert",
 		"!", "audioresample",
-		"!", fmt.Sprintf("audio/x-raw,rate=%d,channels=%d,format=%s,layout=interleaved", audioSampleRate, audioChannels, format),
+		"!", fmt.Sprintf("audio/x-raw,rate=%d,channels=%d,format=%s,layout=interleaved", rate, audioChannels, format),
 	)
 	if timestamped {
 		// The real-time sender is normally driven by one source callback per
@@ -208,7 +226,7 @@ func audioCapturePipelineArgs(srcArgs []string, codec AudioCodec, timestamped bo
 		// sound-server buffer into smaller RTP packets and reconstructing a frame
 		// before holding it on a second timer.
 		args = append(args,
-			"!", "audiobuffersplit", fmt.Sprintf("output-buffer-duration=%d/%d", codecSPF, audioSampleRate),
+			"!", "audiobuffersplit", fmt.Sprintf("output-buffer-duration=%d/%d", codecSPF, rate),
 			"strict-buffer-size=true",
 		)
 		// Preserve complete source samples through short CPU/GPU scheduling stalls.
@@ -220,7 +238,7 @@ func audioCapturePipelineArgs(srcArgs []string, codec AudioCodec, timestamped bo
 		)
 		// ceil(SPF / sampleRate) keeps a normal codec frame within one packet,
 		// while the Go reader remains correct if GStreamer splits or combines it.
-		maxPacketTime := (codecSPF*int64(time.Second) + audioSampleRate - 1) / audioSampleRate
+		maxPacketTime := (codecSPF*int64(time.Second) + rate - 1) / rate
 		args = append(args,
 			"!", "rtpL16pay", "pt=96", "mtu=60000", "timestamp-offset=0", "seqnum-offset=0",
 			// Generate capture RTP from the number of PCM samples, not wall time.
@@ -245,7 +263,7 @@ func audioCapturePipelineArgs(srcArgs []string, codec AudioCodec, timestamped bo
 // AAC-ELD is available in builds made with -tags fdk_aac and libfdk-aac.
 func StartAudioCapture(ctx context.Context, testTone bool, codec AudioCodec) (*AudioCapture, error) {
 	captureCtx, cancel := context.WithCancel(ctx)
-	if codec != AudioCodecALAC && codec != AudioCodecAACELD {
+	if codec != AudioCodecALAC && codec != AudioCodecAACELD && codec != AudioCodecPCM48 {
 		cancel()
 		return nil, fmt.Errorf("unsupported audio codec %d", codec)
 	}
@@ -331,7 +349,7 @@ func StartAudioCapture(ctx context.Context, testTone bool, codec AudioCodec) (*A
 	ac.gstCmd = gstCmd
 	ac.pcmPipe = gstStdout
 	if timestamped {
-		ac.pcmFrames = newRTPL16PCMFrameReader(gstStdout)
+		ac.pcmFrames = newRTPL16PCMFrameReaderAt(gstStdout, uint64(codec.sampleRate()))
 	}
 	go func() {
 		ac.waitErr = <-waitResult
@@ -387,6 +405,9 @@ func (ac *AudioCapture) readFramePosition(buf []byte) (int, audioPCMFramePositio
 	}
 	if DebugMode() {
 		ac.recordPCMLevels(pcm)
+	}
+	if ac.codec == AudioCodecPCM48 {
+		return copy(buf, pcm), position, nil
 	}
 	if ac.codec == AudioCodecAACELD {
 		ac.eldMu.Lock()

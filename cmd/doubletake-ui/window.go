@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
@@ -14,6 +15,11 @@ import (
 )
 
 const pollMillis = 1000
+
+// miracastSearchEvery spaces Miracast searches while the window is open: the
+// daemon searches for 20 s, then Wi-Fi gets 10 s undisturbed. A search moves
+// the radio off its channel, so none runs while hidden in the tray or casting.
+const miracastSearchEvery = 30 * time.Second
 
 // sources lists the capture-source toggles in display order.
 var sources = []struct{ id, label string }{
@@ -38,16 +44,17 @@ type window struct {
 	pin     *gtk.Entry
 	stop    *gtk.Button
 
-	tray      *tray // nil until the tray icon is exported
-	autostart *gio.SimpleAction
-	ready     bool // the daemon is up
-	polling   atomic.Bool
-	timer     glib.SourceHandle
-	view      view
-	lastState string
-	shownKey  string
-	shown     []daemon.DeviceInfo
-	actionErr string
+	tray       *tray // nil until the tray icon is exported
+	autostart  *gio.SimpleAction
+	ready      bool      // the daemon is up
+	nextSearch time.Time // earliest next Miracast search
+	polling    atomic.Bool
+	timer      glib.SourceHandle
+	view       view
+	lastState  string
+	shownKey   string
+	shown      []daemon.DeviceInfo
+	actionErr  string
 }
 
 func newWindow(app *gtk.Application, opts options) *window {
@@ -204,6 +211,17 @@ func (w *window) setSource(source string) {
 	}
 }
 
+// searchMiracast starts a daemon Miracast search when one is due, the window
+// is shown and nothing is casting. Displays appear in the list as the search
+// finds them; AirPlay discovery runs all the time.
+func (w *window) searchMiracast(v view) {
+	if !w.ready || v.busy || !w.IsVisible() || time.Now().Before(w.nextSearch) {
+		return
+	}
+	w.nextSearch = time.Now().Add(miracastSearchEvery)
+	go func() { _, _ = w.client.Discover() }()
+}
+
 // poll fetches the daemon state in the background and renders it.
 func (w *window) poll() {
 	if !w.ready || !w.polling.CompareAndSwap(false, true) {
@@ -271,6 +289,7 @@ func (w *window) render(v view) {
 		btn.SetSensitive(!v.busy)
 	}
 	w.stop.SetSensitive(v.canStop)
+	w.searchMiracast(v)
 	w.renderDevices(v)
 	if w.tray != nil {
 		w.tray.update(v)
@@ -316,7 +335,7 @@ func (w *window) renderDevices(v view) {
 		row.SetMarginEnd(8)
 		name := gtk.NewLabel(d.Name)
 		name.SetXAlign(0)
-		meta := gtk.NewLabel(firstNonEmpty(d.Model+" · "+d.IP, d.IP))
+		meta := gtk.NewLabel(deviceDetail(d))
 		meta.SetXAlign(0)
 		meta.AddCSSClass("dim-label")
 		meta.AddCSSClass("caption")

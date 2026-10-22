@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"doubletake/internal/airplay"
+	"doubletake/internal/miracast"
 )
 
 // State represents the daemon's current lifecycle state.
@@ -58,6 +59,7 @@ type StreamInfo struct {
 	HasAudio       bool           `json:"has_audio"`
 	AudioMuted     bool           `json:"audio_muted"`
 	CredentialKind CredentialKind `json:"credential_kind,omitempty"`
+	Protocol       string         `json:"protocol,omitempty"`
 }
 
 // Response is returned to the caller for every request.
@@ -82,9 +84,11 @@ type Response struct {
 type DeviceInfo struct {
 	Name     string `json:"name"`
 	Model    string `json:"model"`
-	IP       string `json:"ip"`
+	IP       string `json:"ip"` // connect target: an IP, or "p2p:<address>" for Miracast
 	Port     int    `json:"port"`
 	DeviceID string `json:"device_id"`
+	// Protocol is "airplay" or "miracast". Older daemons omit it (AirPlay).
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // Config holds daemon configuration.
@@ -211,6 +215,7 @@ type activeStream struct {
 	state          State
 	audioMuted     bool
 	session        *airplay.MirrorSession
+	wfd            *miracast.Session // Miracast session; nil for AirPlay
 	client         *airplay.AirPlayClient
 	sink           *airplay.BroadcastSink // fan-out video sink (nil when no broadcast)
 	captureGroup   *videoCaptureGroup     // encoder group selected from the resolved nominal canvas
@@ -218,6 +223,7 @@ type activeStream struct {
 	credentialCh   chan string
 	credentialKind CredentialKind
 	sourceTypes    uint32 // portal source-type mask requested for this stream
+	h264Profile    string // encoder profile constraint; Miracast needs Constrained Baseline
 }
 
 // videoCaptureKey identifies captures which can safely share one encoded
@@ -228,6 +234,7 @@ type videoCaptureKey struct {
 	maxHeight   int
 	codec       airplay.VideoCodec
 	sourceTypes uint32
+	h264Profile string
 }
 
 // videoCaptureGroup owns one capture/encoder and its byte-stream fan-out. A
@@ -249,6 +256,7 @@ type daemonCleanup struct {
 	cancels  []context.CancelFunc
 	sinks    []*airplay.BroadcastSink
 	sessions []*airplay.MirrorSession
+	wfds     []*miracast.Session
 	clients  []*airplay.AirPlayClient
 	captures []*airplay.ScreenCapture
 }
@@ -265,6 +273,10 @@ func (cleanup *daemonCleanup) addStream(entry *activeStream) {
 	if entry.session != nil {
 		cleanup.sessions = append(cleanup.sessions, entry.session)
 		entry.session = nil
+	}
+	if entry.wfd != nil {
+		cleanup.wfds = append(cleanup.wfds, entry.wfd)
+		entry.wfd = nil
 	}
 	if entry.client != nil {
 		cleanup.clients = append(cleanup.clients, entry.client)
@@ -298,6 +310,9 @@ func (cleanup *daemonCleanup) run() {
 	for _, session := range cleanup.sessions {
 		_ = session.Close()
 	}
+	for _, session := range cleanup.wfds {
+		_ = session.Close()
+	}
 	for _, client := range cleanup.clients {
 		_ = client.Close()
 	}
@@ -321,6 +336,16 @@ type Daemon struct {
 	captureStartMu  sync.Mutex                             // serializes exact-size group publication/encoder startup
 	lastError       string                                 // most recent asynchronous stream failure
 	lastErrorTarget string                                 // target associated with lastError; empty for capture-wide errors
+
+	// Miracast: the Wi-Fi P2P device is opened on first use. A search runs
+	// only on request, since it competes with normal Wi-Fi traffic.
+	p2p             *miracast.P2P
+	p2pErr          error
+	p2pOpened       bool
+	p2pSearching    bool
+	p2pSearchCancel context.CancelFunc
+	miracastPeers   []miracast.Peer
+	miracastPeersAt time.Time
 
 	discoverCancel context.CancelFunc
 	listener       net.Listener
@@ -459,6 +484,7 @@ func (d *Daemon) Shutdown() {
 		_ = listener.Close()
 	}
 	cleanup.run()
+	d.closeP2P()
 
 	// Network handshakes, capture callbacks, and a concurrent control request's
 	// detached cleanup may still be unwinding. Do not let them run into the next
@@ -603,9 +629,10 @@ func (d *Daemon) statusResponseLocked(ok bool, errMsg string) Response {
 			Device:         s.device,
 			DeviceIP:       s.deviceIP,
 			State:          s.state,
-			HasAudio:       s.session != nil && s.session.HasAudio(),
+			HasAudio:       (s.session != nil && s.session.HasAudio()) || (s.wfd != nil && s.wfd.HasAudio()),
 			AudioMuted:     s.audioMuted,
 			CredentialKind: waitingCredentialKind(s),
+			Protocol:       streamProtocol(s.deviceIP),
 		})
 	}
 	// Sort for deterministic output
@@ -683,14 +710,11 @@ func restoreSavedPairing(client *airplay.AirPlayClient, saved *airplay.SavedCred
 	return client.RestorePairingCredentials(saved)
 }
 
+// handleDiscover returns the known devices and starts a Miracast search; AirPlay
+// discovery runs continuously in the background.
 func (d *Daemon) handleDiscover() Response {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return Response{
-		OK:      true,
-		State:   d.overallStateLocked(),
-		Devices: toDeviceInfos(d.devices),
-	}
+	d.startMiracastSearch()
+	return d.handleDevices()
 }
 
 func (d *Daemon) handleDevices() Response {
@@ -699,7 +723,7 @@ func (d *Daemon) handleDevices() Response {
 	return Response{
 		OK:      true,
 		State:   d.overallStateLocked(),
-		Devices: toDeviceInfos(d.devices),
+		Devices: append(toDeviceInfos(d.devices), d.miracastDeviceInfosLocked()...),
 	}
 }
 
@@ -773,6 +797,10 @@ func (d *Daemon) handleConnect(req Request) Response {
 			d.mu.Unlock()
 			return Response{OK: false, State: st, Error: "already connected or connecting to " + target}
 		}
+	}
+
+	if isMiracastTarget(target) {
+		return d.connectMiracastLocked(target, sourceTypes)
 	}
 
 	// If no target specified, use first cached device not already streaming.
@@ -1139,7 +1167,7 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 	// not start an encoder until control SETUP exposes session-time display info.
 	// This preserves the receiver deadline while avoiding the provisional 720p
 	// fallback used by receivers whose public /info omits displays.
-	capturePreparation, err := d.prepareVideoCapture(ctx, entry.sourceTypes, screenCastRestoreToken, deviceID)
+	capturePreparation, err := d.prepareVideoCapture(ctx, entry.sourceTypes, screenCastRestoreToken, deviceID, "")
 	if err != nil {
 		removeStream(fmt.Sprintf("prepare capture failed: %v", err))
 		return
@@ -1177,7 +1205,7 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 				if saved := d.credStore.Lookup(deviceID); saved != nil && saved.RestoreToken != "" && monitorSource(entry.sourceTypes) {
 					restoreToken = saved.RestoreToken
 				}
-				replacement, fallbackErr := d.prepareVideoCapture(ctx, entry.sourceTypes, restoreToken, deviceID, airplay.VideoCodecH264)
+				replacement, fallbackErr := d.prepareVideoCapture(ctx, entry.sourceTypes, restoreToken, deviceID, "", airplay.VideoCodecH264)
 				if fallbackErr != nil {
 					return airplay.VideoPreparationResult{}, fmt.Errorf("%v; prepare H.264 fallback: %w", startErr, fallbackErr)
 				}
@@ -1346,7 +1374,7 @@ func normalizedVideoCaptureKey(maxW, maxH int, codecs ...airplay.VideoCodec) vid
 // reveals the session-time display canvas. Portal serialization is deliberately
 // separate from captureStartMu: a different user prompt must not block an
 // already-negotiated receiver from starting its encoder before its deadline.
-func (d *Daemon) prepareVideoCapture(ctx context.Context, sourceTypes uint32, restoreToken, deviceID string, codecs ...airplay.VideoCodec) (*airplay.CapturePreparation, error) {
+func (d *Daemon) prepareVideoCapture(ctx context.Context, sourceTypes uint32, restoreToken, deviceID, h264Profile string, codecs ...airplay.VideoCodec) (*airplay.CapturePreparation, error) {
 	d.capturePortalMu.Lock()
 	defer d.capturePortalMu.Unlock()
 
@@ -1359,6 +1387,7 @@ func (d *Daemon) prepareVideoCapture(ctx context.Context, sourceTypes uint32, re
 		Bitrate:      d.cfg.Bitrate,
 		HWAccel:      d.cfg.HWAccel,
 		VideoCodec:   codec,
+		H264Profile:  h264Profile,
 		ShowCursor:   d.cfg.ShowCursor,
 		SourceTypes:  sourceTypes,
 		RestoreToken: restoreToken,
@@ -1384,6 +1413,7 @@ func (d *Daemon) getOrStartPreparedCaptureGroup(ctx context.Context, entry *acti
 
 	key := normalizedVideoCaptureKey(width, height, codec)
 	key.sourceTypes = entry.sourceTypes
+	key.h264Profile = entry.h264Profile
 	d.mu.Lock()
 	if d.streams[entry.deviceIP] != entry {
 		d.mu.Unlock()
@@ -1614,13 +1644,14 @@ func (cleanup *daemonCleanup) merge(other daemonCleanup) {
 	cleanup.cancels = append(cleanup.cancels, other.cancels...)
 	cleanup.sinks = append(cleanup.sinks, other.sinks...)
 	cleanup.sessions = append(cleanup.sessions, other.sessions...)
+	cleanup.wfds = append(cleanup.wfds, other.wfds...)
 	cleanup.clients = append(cleanup.clients, other.clients...)
 	cleanup.captures = append(cleanup.captures, other.captures...)
 }
 
 func (cleanup *daemonCleanup) empty() bool {
 	return len(cleanup.cancels) == 0 && len(cleanup.sinks) == 0 &&
-		len(cleanup.sessions) == 0 && len(cleanup.clients) == 0 &&
+		len(cleanup.sessions) == 0 && len(cleanup.wfds) == 0 && len(cleanup.clients) == 0 &&
 		len(cleanup.captures) == 0
 }
 
@@ -1758,10 +1789,13 @@ func (d *Daemon) handleSetMute(req Request, muted bool) Response {
 		return resp
 	}
 
-	sessions := make([]*airplay.MirrorSession, 0, len(targets))
+	sessions := make([]interface{ SetAudioMuted(bool) error }, 0, len(targets))
 	for _, t := range targets {
 		if t.session != nil && (d.cfg.NoAudio || t.session.HasAudio()) {
 			sessions = append(sessions, t.session)
+		}
+		if t.wfd != nil && t.wfd.HasAudio() {
+			sessions = append(sessions, t.wfd)
 		}
 	}
 	d.mu.Unlock()

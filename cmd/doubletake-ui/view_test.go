@@ -63,3 +63,18 @@ func TestBuildViewStreamingAndErrors(t *testing.T) {
 		t.Fatalf("action error view = %+v", action)
 	}
 }
+
+func TestDeviceDetail(t *testing.T) {
+	for _, test := range []struct {
+		device daemon.DeviceInfo
+		want   string
+	}{
+		{daemon.DeviceInfo{Model: "AppleTV14,1", IP: "192.168.1.7"}, "AirPlay · AppleTV14,1 · 192.168.1.7"},
+		{daemon.DeviceInfo{IP: "192.168.1.8", Protocol: "airplay"}, "AirPlay · 192.168.1.8"},
+		{daemon.DeviceInfo{Model: "Miracast", IP: "p2p:DA:C0:BF:B4:E3:48", Protocol: "miracast"}, "Miracast"},
+	} {
+		if got := deviceDetail(test.device); got != test.want {
+			t.Errorf("deviceDetail(%+v) = %q, want %q", test.device, got, test.want)
+		}
+	}
+}

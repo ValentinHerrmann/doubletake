@@ -32,6 +32,10 @@ type CaptureConfig struct {
 	HWAccel    string     // "auto", "nvenc", "vaapi", "openh264", or "none"
 	VideoCodec VideoCodec // empty/h264, auto (resolved before Start), or hevc
 
+	// H264Profile constrains the H.264 encoder's output profile, as a GStreamer
+	// caps value such as "constrained-baseline". Empty leaves it to the encoder.
+	H264Profile string
+
 	// MaxWidth/MaxHeight select the encoded canvas advertised by the receiver.
 	// The captured image is aspect-fitted into it. Zero leaves the capture at
 	// its native size.
@@ -839,6 +843,7 @@ type encoderResult struct {
 	rawFormat   string // raw format accepted by the encoder
 	codec       VideoCodec
 	inputMemory encoderInputMemory
+	outputCaps  string // caps filter directly after the encoder; empty for none
 }
 
 type waylandPipelineMode uint8
@@ -996,6 +1001,9 @@ func buildGstVideoPipeline(source gstStage, beforeConvert, afterScale []gstStage
 
 func appendGstVideoEncoding(args []string, encoder encoderResult, timestampedOutput bool) []string {
 	args = appendGstStage(args, encoder.parts)
+	if encoder.outputCaps != "" {
+		args = appendGstStage(args, gstStage{encoder.outputCaps})
+	}
 	parser, mediaType, payloader := "h264parse", "video/x-h264", "rtph264pay"
 	if encoder.codec == VideoCodecHEVC {
 		parser, mediaType, payloader = "h265parse", "video/x-h265", "rtph265pay"
@@ -2094,7 +2102,11 @@ func selectGstEncoderWithProbe(cfg CaptureConfig, hasElement func(string) bool, 
 			if announce {
 				log.Printf("[CAPTURE] using %s", candidate.label)
 			}
-			return candidate.result, nil
+			result := candidate.result
+			if cfg.H264Profile != "" {
+				result.outputCaps = "video/x-h264,profile=" + cfg.H264Profile
+			}
+			return result, nil
 		}
 	}
 

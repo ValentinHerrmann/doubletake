@@ -41,10 +41,11 @@ type audioPCMFramePositionReader interface {
 // rtpL16PCMFrameReader consumes RFC4571-framed RTP/L16 produced by GStreamer.
 // RTP packet boundaries do not need to match AirPlay codec-frame boundaries.
 type rtpL16PCMFrameReader struct {
-	reader io.Reader
-	now    func() time.Time
-	packet []byte
-	pcm    []byte
+	reader     io.Reader
+	now        func() time.Time
+	sampleRate uint64 // capture rate; zero means the AirPlay audioSampleRate
+	packet     []byte
+	pcm        []byte
 
 	haveTimeline    bool
 	timelinePTS     time.Time
@@ -68,6 +69,21 @@ type rtpL16PCMFrameReader struct {
 
 func newRTPL16PCMFrameReader(reader io.Reader) audioPCMFrameReader {
 	return newRTPL16PCMFrameReaderWithNow(reader, time.Now)
+}
+
+// newRTPL16PCMFrameReaderAt reads a capture running at sampleRate rather than
+// the AirPlay rate.
+func newRTPL16PCMFrameReaderAt(reader io.Reader, sampleRate uint64) audioPCMFrameReader {
+	r := newRTPL16PCMFrameReaderWithNow(reader, time.Now)
+	r.sampleRate = sampleRate
+	return r
+}
+
+func (r *rtpL16PCMFrameReader) rate() uint64 {
+	if r.sampleRate == 0 {
+		return audioSampleRate
+	}
+	return r.sampleRate
 }
 
 func newRTPL16PCMFrameReaderWithNow(reader io.Reader, now func() time.Time) *rtpL16PCMFrameReader {
@@ -102,7 +118,7 @@ func (r *rtpL16PCMFrameReader) ReadPCMFramePosition(dst []byte) (audioPCMFramePo
 	sourceRTP := r.timelineRTP + uint32(r.consumedSamples)
 	// Use the newest packet's RTP/PTS correlation. This retains slow source-clock
 	// rate changes instead of extrapolating forever from the first packet.
-	pts := r.timelinePTS.Add(audioSamplesDuration(uint64(uint32(sourceRTP - r.timelineRTP))))
+	pts := r.timelinePTS.Add(samplesDurationAt(uint64(uint32(sourceRTP-r.timelineRTP)), r.rate()))
 	copy(dst, r.pcm[:len(dst)])
 	r.pcm = r.pcm[len(dst):]
 	r.consumedSamples += uint64(len(dst) / audioBytesPerSampleFrame)
@@ -133,8 +149,8 @@ func (r *rtpL16PCMFrameReader) readPacket() error {
 	ptsDeltaSamples := int64(0)
 	if r.haveTimeline {
 		expectedRTP := r.timelineRTP + uint32(r.receivedSamples)
-		expectedPTS := r.timelinePTS.Add(audioSamplesDuration(r.receivedSamples))
-		ptsDeltaSamples = durationToAudioSamples(packetPTS.Sub(expectedPTS))
+		expectedPTS := r.timelinePTS.Add(samplesDurationAt(r.receivedSamples, r.rate()))
+		ptsDeltaSamples = durationToSamplesAt(packetPTS.Sub(expectedPTS), r.rate())
 		discontinuous = !r.havePacket || header.sequence != r.sequence+1 || header.ssrc != r.ssrc ||
 			header.timestamp != expectedRTP
 		if discontinuous {
@@ -148,7 +164,7 @@ func (r *rtpL16PCMFrameReader) readPacket() error {
 		// The source RTP clock is authoritative for sample progression, while PTS
 		// tells us where that sample boundary lies on the system/network timeline.
 		consumedBeforePacket := r.receivedSamples
-		r.timelinePTS = packetPTS.Add(-audioSamplesDuration(consumedBeforePacket))
+		r.timelinePTS = packetPTS.Add(-samplesDurationAt(consumedBeforePacket, r.rate()))
 	}
 	if discontinuous {
 		r.pcm = r.pcm[:0]
@@ -191,7 +207,7 @@ func (r *rtpL16PCMFrameReader) recordTiming(packetSamples uint64, ptsDeltaSample
 	}
 	r.reportPackets++
 	r.reportSamples += packetSamples
-	if r.reportSamples < audioSampleRate {
+	if r.reportSamples < r.rate() {
 		return
 	}
 	dbg("[AUDIO-CAPTURE] timing packets=%d samples=%d source-age=%v..%v pts-correction=%d..%d samples buffered=%d discontinuities=%d",
@@ -297,20 +313,29 @@ func parseTimestampedL16RTPPacket(packet []byte) (timestampedL16RTPHeader, []byt
 }
 
 func audioSamplesDuration(samples uint64) time.Duration {
-	seconds := samples / audioSampleRate
-	remainder := samples % audioSampleRate
+	return samplesDurationAt(samples, audioSampleRate)
+}
+
+func samplesDurationAt(samples, rate uint64) time.Duration {
+	seconds := samples / rate
+	remainder := samples % rate
 	return time.Duration(seconds)*time.Second +
-		time.Duration((remainder*uint64(time.Second)+audioSampleRate/2)/audioSampleRate)
+		time.Duration((remainder*uint64(time.Second)+rate/2)/rate)
 }
 
 func durationToAudioSamples(delta time.Duration) int64 {
+	return durationToSamplesAt(delta, audioSampleRate)
+}
+
+func durationToSamplesAt(delta time.Duration, rate uint64) int64 {
 	seconds := int64(delta / time.Second)
 	remainder := int64(delta % time.Second)
-	whole := seconds * audioSampleRate
+	r := int64(rate)
+	whole := seconds * r
 	if remainder >= 0 {
-		return whole + (remainder*audioSampleRate+int64(time.Second)/2)/int64(time.Second)
+		return whole + (remainder*r+int64(time.Second)/2)/int64(time.Second)
 	}
-	return whole - ((-remainder)*audioSampleRate+int64(time.Second)/2)/int64(time.Second)
+	return whole - ((-remainder)*r+int64(time.Second)/2)/int64(time.Second)
 }
 
 // audioRTPClock maps the source sample timebase onto the sender's random RTP

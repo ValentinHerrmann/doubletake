@@ -17,7 +17,9 @@ Query the status of the running doubletake daemon and list active connections
 .TP
 .B connect [\fITARGET\fR] [\fIPIN-OR-PASSWORD\fR]
 Connect to an Apple TV, optionally supplying pairing credentials. If no target
-is specified, connect to the first available discovered receiver
+is specified, connect to the first available discovered receiver. A Miracast
+display's target is \fBp2p:\fR followed by its P2P address, as listed by
+\fBdevices\fR after \fBdiscover\fR
 .TP
 .B pin \fIPIN-OR-PASSWORD\fR
 Submit the credential for a receiver waiting for input. The command retains its

@@ -1,7 +1,8 @@
 # doubletake
 
-AirPlay screen mirroring sender for Linux. Streams your desktop, or a single
-window, to an Apple TV or another AirPlay receiver.
+AirPlay and Miracast screen mirroring sender for Linux. Streams your desktop,
+or a single window, to an Apple TV or another AirPlay receiver, or to a
+Miracast display (TV, projector or dongle) over Wi-Fi Direct.
 
 This is a fork of [omarroth/doubletake](https://github.com/omarroth/doubletake).
 It adds:
@@ -10,6 +11,8 @@ It adds:
   receiver, enter its PIN and start or stop mirroring.
 - **Capture source choice**: `-source any|monitor|window` on the CLI and the
   daemon, and a Screen / Window / Ask switch in the app.
+- **Miracast** (experimental): Wi-Fi Direct displays in the same app and
+  daemon as AirPlay receivers; see [Miracast](#miracast).
 - **One-line install, update and uninstall** from this fork's releases.
 
 The AUR packages (`doubletake`, `doubletake-git`, `doubletake-bin`) build
@@ -46,6 +49,8 @@ The install scripts do not install these system packages; install them first.
 - PulseAudio utilities (`pactl`)
 - PipeWire and xdg-desktop-portal (Wayland) or X11 for screen capture
 - GTK 4.14 or newer for the desktop app
+- For Miracast only: NetworkManager with the wpa_supplicant Wi-Fi backend and a
+  Wi-Fi card that supports P2P (see [Miracast](#miracast))
 
 ```sh
 # Arch Linux
@@ -65,7 +70,8 @@ the plugins-bad package. Check with `gst-inspect-1.0 openh264enc`.
 
 Start **Doubletake** from the app menu, or run `doubletake-ui`. The window:
 
-- lists the AirPlay receivers on the network (discovery runs continuously);
+- lists the AirPlay receivers on the network (discovery runs continuously)
+  and the Miracast displays nearby (searched while the window is open);
 - starts mirroring when you click a receiver;
 - asks for the PIN shown on the receiver, or its password, when needed;
 - stops with **Stop casting**.
@@ -189,6 +195,7 @@ doubletake-ctl disconnect
 | `-daemonize` | false | Run as background daemon with Unix socket control interface |
 | `-source` | `any` | Wayland capture source offered by the screen-sharing dialog: `any`, `monitor` (remembers the chosen screen) or `window`. With `-daemonize` the default stays `monitor`; a daemon `connect` request may set its own `source` |
 | `-socket` | `$XDG_RUNTIME_DIR/doubletake.sock` | Daemon control socket path |
+| `-miracast` | | Experimental: `list` searches for Miracast displays; a display's P2P address mirrors to it (see [Miracast](#miracast)) |
 | `-debug` | false | Verbose debug logging |
 
 Only `-hwaccel auto` tries fallback encoders, in the order `vulkanh264enc`,
@@ -203,6 +210,48 @@ for compatibility across AirPlay receiver generations. Explicit
 Main10 alone does not turn an SDR X11 or portal capture into HDR: doubletake
 preserves encoder-provided HDR SEI but does not invent PQ/HLG mastering metadata
 or relabel SDR colors as HDR.
+
+## Miracast
+
+Miracast support is experimental. Doubletake forms a Wi-Fi Direct group with
+the display through NetworkManager, negotiates the stream over WFD RTSP and
+sends H.264 (Constrained Baseline, up to 1080p) with 48 kHz LPCM audio as
+MPEG-TS over RTP.
+
+In the desktop app, Miracast displays appear in the receiver list marked
+**Miracast**. The search runs only while the window is open and nothing is
+casting, because a Wi-Fi Direct search takes the radio off its channel. Found
+displays stay listed for two minutes. On the command line:
+
+```sh
+doubletake -miracast list                 # search for 15 s and list displays
+doubletake -miracast DA:C0:BF:B4:E3:48    # mirror to a display by its P2P address
+doubletake-ctl connect p2p:DA:C0:BF:B4:E3:48
+```
+
+Requirements and limits:
+
+- The Wi-Fi card must support P2P (`iw list` shows `P2P-GO` and `P2P-client`),
+  and NetworkManager must use the wpa_supplicant backend. Check with
+  `nmcli device`: a `wifi-p2p` device such as `p2p-dev-wlan0` must exist.
+- The display connects back to TCP 7236 on the Wi-Fi Direct interface. A host
+  firewall must allow that port there.
+- No HDCP. A display that insists on content protection rejects the stream.
+- One Miracast display at a time. AirPlay receivers can stream alongside it.
+- `-target-latency-ms` sets the display's playout buffer (default 150 ms).
+
+Troubleshooting:
+
+- **The display joins but never connects** ("did not open its control
+  connection"): many displays stay stuck after a session that ended without a
+  proper stop (a crash, `kill -9`, or a second Ctrl+C). Power-cycle the
+  display. A normal stop (**Stop casting**, `doubletake-ctl disconnect`,
+  Ctrl+C once) always tears the session down first.
+- **Motion stutters** (half speed, then catching up) while connected to a normal
+  Wi-Fi network: the Wi-Fi Direct group then runs on a different channel than
+  your network and the card switches between both. When your access point uses
+  a DFS channel (52–144), the group cannot share it. Disconnecting from the
+  network while casting, or `-target-latency-ms 300`, helps.
 
 ## Daemon and `doubletake-ctl`
 
@@ -342,6 +391,7 @@ These are devices that have been tested with doubletake. If there are devices no
 - TCL 55Q6C
 - Hisense 55A6QU
 - Xiaomi 4K HDR TV (AFTBR92D74) (currently non-functional, see [#4](https://github.com/omarroth/doubletake/issues/4))
+- MiraScreen Miracast dongle (Miracast, 1080p30 with audio)
 
 ## Build from source
 
@@ -401,6 +451,7 @@ and video when the advertised audio format is unavailable.
 - Automatic connection-aware screen/audio latency policy with an optional `-target-latency-ms` override
 - KDE Plasma widget for quick access (see [plasmoid/](plasmoid/))
 - GTK 4 desktop app and selectable capture source (this fork)
+- Experimental Miracast sender over Wi-Fi Direct via NetworkManager (this fork)
 
 ## Releases
 

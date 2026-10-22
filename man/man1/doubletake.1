@@ -76,6 +76,12 @@ Target bitrate in kbps (0 = auto, default: 0)
 .B \-target-latency-ms \fIMS\fR
 Override both audio and video playout latency in milliseconds. Zero selects the
 automatic AirPlay policy with separate screen and audio defaults (default: 0).
+For Miracast it sets the display's playout buffer (default: 150 ms).
+.TP
+.B \-miracast \fITARGET\fR
+Experimental. \fBlist\fR searches for Miracast displays over Wi-Fi Direct;
+a display's P2P address (as printed by \fBlist\fR) mirrors to it. Needs a
+P2P-capable Wi-Fi card and NetworkManager with the wpa_supplicant backend.
 .TP
 .B \-no-audio
 Disable audio for video-only mirroring
