@@ -158,7 +158,7 @@ func (s *Session) Stream(ctx context.Context, video VideoSource, audio *airplay.
 				pts = now
 			}
 			muxMu.Lock()
-			err = mux.WriteVideo(au.AnnexB, pts, now, hasIDR(au.AnnexB))
+			err = mux.WriteVideo(au.AnnexB, pts, now, airplay.AccessUnitHasKeyframe(au.AnnexB, airplay.VideoCodecH264))
 			if err == nil {
 				err = rtp.Flush()
 			}
@@ -230,14 +230,4 @@ func (s *Session) Close() error {
 		err = s.group.Close()
 	})
 	return err
-}
-
-// hasIDR reports whether an Annex-B access unit contains an IDR slice.
-func hasIDR(annexB []byte) bool {
-	for i := 0; i+3 < len(annexB); i++ {
-		if annexB[i] == 0 && annexB[i+1] == 0 && annexB[i+2] == 1 && annexB[i+3]&0x1f == 5 {
-			return true
-		}
-	}
-	return false
 }

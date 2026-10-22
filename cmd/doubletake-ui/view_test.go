@@ -64,6 +64,27 @@ func TestBuildViewStreamingAndErrors(t *testing.T) {
 	}
 }
 
+func TestBuildViewCastingControls(t *testing.T) {
+	status := &daemon.Response{
+		State:       daemon.StateStreaming,
+		HasAudio:    true,
+		AudioMuted:  true,
+		VideoFrozen: true,
+		VideoBlack:  true,
+	}
+	v := buildView(status, nil, nil, "")
+	if !v.casting || !v.hasAudio || !v.muted || !v.frozen || !v.black {
+		t.Fatalf("casting view = %+v", v)
+	}
+
+	// Stale flags of a stream that is still connecting control nothing.
+	status.State = daemon.StateConnecting
+	connecting := buildView(status, nil, nil, "")
+	if connecting.casting || connecting.muted || connecting.frozen || connecting.black {
+		t.Fatalf("connecting view = %+v", connecting)
+	}
+}
+
 func TestDeviceDetail(t *testing.T) {
 	for _, test := range []struct {
 		device daemon.DeviceInfo

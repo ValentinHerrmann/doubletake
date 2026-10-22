@@ -31,6 +31,21 @@ to select one explicitly.
 .TP
 .B disconnect [\fITARGET\fR]
 Disconnect from an Apple TV. If no target is specified, disconnects all active connections
+.TP
+.B mute [\fITARGET\fR], unmute [\fITARGET\fR]
+Mute or unmute mirrored audio. If no target is specified, applies to all active
+connections
+.TP
+.B freeze, unfreeze
+Hold the current picture on every receiver, AirPlay and Miracast, while the
+desktop stays live locally. Audio continues.
+.B unfreeze
+returns to live video at the encoder's next keyframe, within two seconds
+.TP
+.B blackout, unblackout
+Show a black picture on every receiver. Blackout takes precedence over freeze:
+ending it returns to the frozen picture if freeze is still on, and to live
+video otherwise
 .SH EXAMPLES
 .TP
 Check daemon status:
@@ -74,6 +89,11 @@ from
 The legacy
 .B needs_pin
 field remains true only for an actual on-screen PIN.
+.PP
+.B video_frozen
+and
+.B video_black
+report freeze and blackout. Both end when the last connection closes.
 .PP
 Each waiting connection is also listed in
 .B streams

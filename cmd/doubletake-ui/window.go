@@ -42,10 +42,17 @@ type window struct {
 	list    *gtk.ListBox
 	pinBox  *gtk.Box
 	pin     *gtk.Entry
+	mute    *gtk.ToggleButton
 	stop    *gtk.Button
 
+	app        *gtk.Application
 	tray       *tray // nil until the tray icon is exported
 	autostart  *gio.SimpleAction
+	keepAwake  *gio.SimpleAction
+	casting    map[string]*gio.SimpleAction // freeze, blackout and mute
+	settings   settings
+	inhibit    uint      // gtk inhibit cookie while keeping the screen awake
+	inhibitErr bool      // the last inhibit request failed; retry after casting stops
 	ready      bool      // the daemon is up
 	nextSearch time.Time // earliest next Miracast search
 	polling    atomic.Bool
@@ -63,6 +70,7 @@ func newWindow(app *gtk.Application, opts options) *window {
 		client:            daemonclient.NewDefault(),
 		source:            opts.source,
 		toggles:           map[string]*gtk.ToggleButton{},
+		app:               app,
 	}
 	w.SetTitle("Doubletake")
 	w.SetDefaultSize(360, 480)
@@ -72,8 +80,11 @@ func newWindow(app *gtk.Application, opts options) *window {
 	w.badge.AddCSSClass("dim-label")
 	header.PackEnd(w.badge)
 	w.addAutostartAction(app)
+	w.addKeepAwakeAction(app)
+	w.addCastingActions(app)
 	menu := gio.NewMenu()
 	menu.Append("Start on login", "app.autostart")
+	menu.Append("Keep screen awake while casting", "app.keepawake")
 	menuButton := gtk.NewMenuButton()
 	menuButton.SetIconName("open-menu-symbolic")
 	menuButton.SetMenuModel(menu)
@@ -140,6 +151,19 @@ func newWindow(app *gtk.Application, opts options) *window {
 	w.pinBox.SetVisible(false)
 	body.Append(w.pinBox)
 
+	controls := gtk.NewBox(gtk.OrientationHorizontal, 6)
+	controls.SetHomogeneous(true)
+	for _, c := range castingControls {
+		btn := gtk.NewToggleButtonWithLabel(c.label)
+		btn.SetTooltipText(c.tooltip)
+		btn.SetActionName("app." + c.action)
+		controls.Append(btn)
+		if c.action == "mute" {
+			w.mute = btn
+		}
+	}
+	body.Append(controls)
+
 	w.stop = gtk.NewButtonWithLabel("Stop casting")
 	w.stop.SetSensitive(false)
 	w.stop.ConnectClicked(func() { w.act(w.client.Disconnect) })
@@ -193,6 +217,96 @@ func (w *window) addAutostartAction(app *gtk.Application) {
 		}
 	})
 	app.AddAction(w.autostart)
+}
+
+// castingControls are the toggles that change a running cast. Each is a
+// boolean app action shared by the window buttons and the tray menu.
+var castingControls = []struct{ action, label, tooltip string }{
+	{"freeze", "Freeze", "Keep showing the current picture on the receivers"},
+	{"blackout", "Blackout", "Show a black picture on the receivers"},
+	{"mute", "Mute", "Mute the cast's audio"},
+}
+
+// addCastingActions registers app.freeze, app.blackout and app.mute. They are
+// enabled only while casting; render keeps their state in sync with the
+// daemon, which applies them to every receiver.
+func (w *window) addCastingActions(app *gtk.Application) {
+	requests := map[string][2]func() (*daemon.Response, error){
+		"freeze":   {w.client.Freeze, w.client.Unfreeze},
+		"blackout": {w.client.Blackout, w.client.Unblackout},
+		"mute":     {w.client.Mute, w.client.Unmute},
+	}
+	w.casting = map[string]*gio.SimpleAction{}
+	for _, c := range castingControls {
+		on, off := requests[c.action][0], requests[c.action][1]
+		action := gio.NewSimpleActionStateful(c.action, nil, glibv2.NewVariantBoolean(false))
+		action.SetEnabled(false)
+		action.ConnectChangeState(func(value *glibv2.Variant) {
+			// Show the change at once; the next poll reports the daemon's state.
+			action.SetState(value)
+			if value.Boolean() {
+				w.act(on)
+			} else {
+				w.act(off)
+			}
+		})
+		app.AddAction(action)
+		w.casting[c.action] = action
+	}
+}
+
+// renderCasting syncs the casting actions with the daemon state.
+func (w *window) renderCasting(v view) {
+	for name, on := range map[string]bool{"freeze": v.frozen, "blackout": v.black, "mute": v.muted} {
+		action := w.casting[name]
+		action.SetEnabled(v.casting)
+		if action.State().Boolean() != on {
+			action.SetState(glibv2.NewVariantBoolean(on))
+		}
+	}
+	// A cast without audio has nothing to mute.
+	w.mute.SetVisible(!v.casting || v.hasAudio)
+}
+
+// addKeepAwakeAction registers app.keepawake, a saved boolean shared by the
+// window menu and the tray checkbox.
+func (w *window) addKeepAwakeAction(app *gtk.Application) {
+	w.settings = loadSettings()
+	w.keepAwake = gio.NewSimpleActionStateful("keepawake", nil, glibv2.NewVariantBoolean(w.settings.KeepAwake))
+	w.keepAwake.ConnectChangeState(func(value *glibv2.Variant) {
+		next := w.settings
+		next.KeepAwake = value.Boolean()
+		if err := saveSettings(next); err != nil {
+			w.actionErr = "Keep screen awake: " + err.Error()
+			w.poll()
+			return
+		}
+		w.settings = next
+		w.keepAwake.SetState(value)
+		if w.tray != nil {
+			w.tray.setKeepAwake(next.KeepAwake)
+		}
+		w.updateInhibit()
+	})
+	app.AddAction(w.keepAwake)
+}
+
+// updateInhibit blocks the screensaver, screen lock and suspend while casting
+// with keep awake on, and lifts the block otherwise. The block ends with this
+// app: a cast that continues after Quit no longer keeps the screen awake.
+func (w *window) updateInhibit() {
+	want := w.settings.KeepAwake && w.view.casting
+	switch {
+	case want && w.inhibit == 0 && !w.inhibitErr:
+		w.inhibit = w.app.Inhibit(nil, gtk.ApplicationInhibitIdle|gtk.ApplicationInhibitSuspend, "Casting the screen")
+		w.inhibitErr = w.inhibit == 0
+	case !want:
+		if w.inhibit != 0 {
+			w.app.Uninhibit(w.inhibit)
+			w.inhibit = 0
+		}
+		w.inhibitErr = false
+	}
 }
 
 // toggleVisible shows a hidden window and hides a shown one (tray click).
@@ -289,6 +403,8 @@ func (w *window) render(v view) {
 		btn.SetSensitive(!v.busy)
 	}
 	w.stop.SetSensitive(v.canStop)
+	w.renderCasting(v)
+	w.updateInhibit()
 	w.searchMiracast(v)
 	w.renderDevices(v)
 	if w.tray != nil {

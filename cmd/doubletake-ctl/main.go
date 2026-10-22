@@ -73,6 +73,14 @@ func main() {
 		} else {
 			resp, err = client.Unmute()
 		}
+	case "freeze":
+		resp, err = client.Freeze()
+	case "unfreeze":
+		resp, err = client.Unfreeze()
+	case "blackout":
+		resp, err = client.Blackout()
+	case "unblackout":
+		resp, err = client.Unblackout()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
@@ -94,5 +102,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: doubletake-ctl [-socket path] <command> [args]\n\nCommands:\n  status                              Show daemon state and all active streams\n  discover                            List devices and start a Miracast search\n  devices                             List cached discovered devices\n  connect [target] [PIN-or-password]  Start mirroring (to target IP, or first free device)\n  pin <PIN-or-password>               Submit pairing credentials for a waiting device\n  disconnect [target]                 Stop mirroring (all streams, or only the given IP)\n  mute [target]                       Mute mirrored audio (all streams, or only the given IP)\n  unmute [target]                     Unmute mirrored audio (all streams, or only the given IP)\n\nFlags:\n  -socket path                        Override daemon socket path (default: %s)\n", daemon.DefaultSocketPath())
+	fmt.Fprintf(os.Stderr, "Usage: doubletake-ctl [-socket path] <command> [args]\n\nCommands:\n  status                              Show daemon state and all active streams\n  discover                            List devices and start a Miracast search\n  devices                             List cached discovered devices\n  connect [target] [PIN-or-password]  Start mirroring (to target IP, or first free device)\n  pin <PIN-or-password>               Submit pairing credentials for a waiting device\n  disconnect [target]                 Stop mirroring (all streams, or only the given IP)\n  mute [target]                       Mute mirrored audio (all streams, or only the given IP)\n  unmute [target]                     Unmute mirrored audio (all streams, or only the given IP)\n  freeze                              Hold the current picture on every receiver\n  unfreeze                            Resume live video (at the next keyframe, within 2 s)\n  blackout                            Show a black picture on every receiver\n  unblackout                          End blackout (back to live video, or the freeze if on)\n\nFlags:\n  -socket path                        Override daemon socket path (default: %s)\n", daemon.DefaultSocketPath())
 }

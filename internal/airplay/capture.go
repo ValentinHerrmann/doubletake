@@ -113,6 +113,9 @@ type ScreenCapture struct {
 	// Synthetic relays have no process exit status. Their readers own terminal
 	// errors even after waitCh closes; treating that channel as EOF loses them.
 	streamOnly bool
+	// still is the encoder configuration used to encode freeze and blackout
+	// frames; nil for synthetic relays.
+	still *stillConfig
 }
 
 type pipeWirePortalSession interface {
@@ -1389,6 +1392,7 @@ func startWaylandCaptureAttempt(ctx context.Context, cfg CaptureConfig, plan way
 		pwNodeID: nodeID,
 		waitCh:   make(chan struct{}),
 		stderr:   stderrTail,
+		still:    &stillConfig{encoder: plan.encoder, fps: fps, maxWidth: cfg.MaxWidth, maxHeight: cfg.MaxHeight},
 	}
 	if timestampedOutput {
 		capture.frames = newRTPVideoAccessUnitReader(stdout, plan.encoder.codec)
@@ -1787,6 +1791,7 @@ func startPreparedX11Capture(startupCtx, lifetimeCtx context.Context, cfg Captur
 		cancel: cancel,
 		waitCh: make(chan struct{}),
 		stderr: stderrTail,
+		still:  &stillConfig{encoder: encoder, fps: fps, maxWidth: cfg.MaxWidth, maxHeight: cfg.MaxHeight},
 	}
 	if timestampedOutput {
 		capture.frames = newRTPVideoAccessUnitReader(stdout, encoder.codec)
@@ -2235,6 +2240,7 @@ func startPreparedTestCapture(ctx context.Context, cfg CaptureConfig, encoder en
 		stdout: stdout,
 		cancel: cancel,
 		waitCh: make(chan struct{}),
+		still:  &stillConfig{encoder: encoder, fps: fps, maxWidth: cfg.MaxWidth, maxHeight: cfg.MaxHeight},
 	}
 	if timestampedOutput {
 		capture.frames = newRTPVideoAccessUnitReader(stdout, encoder.codec)

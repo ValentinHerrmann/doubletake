@@ -9,6 +9,8 @@ It adds:
 
 - **Doubletake desktop app** (`doubletake-ui`): a native GTK 4 window to pick a
   receiver, enter its PIN and start or stop mirroring.
+- **Freeze, Blackout and Mute** while casting, in the app, its tray menu and
+  `doubletake-ctl`, for AirPlay and Miracast receivers.
 - **Capture source choice**: `-source any|monitor|window` on the CLI and the
   daemon, and a Screen / Window / Ask switch in the app.
 - **Miracast** (experimental): Wi-Fi Direct displays in the same app and
@@ -98,11 +100,37 @@ with **Stop casting** or `doubletake-ctl disconnect`. Only one window runs per
 user; starting the app again raises it and, with `-source`, switches its
 capture source.
 
+### Freeze, Blackout and Mute
+
+While casting, three toggles under the receiver list change what every
+receiver shows, without stopping the cast:
+
+- **Freeze** keeps showing the current picture. Your desktop stays live, so
+  you can look something up unseen.
+- **Blackout** shows a black picture. It takes precedence over Freeze: ending
+  it returns to the frozen picture if Freeze is still on.
+- **Mute** mutes the cast's audio. It is hidden when the cast has no audio.
+
+Freeze and Blackout work for AirPlay and Miracast. The receiver gets the still
+picture as ordinary video, repeated every second, so it does not time out.
+Live video returns at the encoder's next keyframe, within two seconds. Audio
+continues during Freeze and Blackout; use Mute to silence it. All three end
+when the last cast stops.
+
+### Keep screen awake
+
+**Keep screen awake while casting** (window menu ☰ or tray menu) blocks the
+screensaver, screen lock and suspend while a cast runs. It is off by default
+and saved in `~/.config/doubletake/ui.json`. The block lasts only while the
+app runs: after **Quit**, a cast that continues no longer keeps the screen
+awake.
+
 ### System tray and start on login
 
 With a system tray, closing the window hides it to a tray icon. Click the
 icon to show or hide the window. Its menu has **Show Doubletake**, **Stop
-casting**, **Start on login** and **Quit**. KDE Plasma has a tray built in.
+casting**, **Freeze**, **Blackout**, **Mute**, **Start on login**, **Keep
+screen awake while casting** and **Quit**. KDE Plasma has a tray built in.
 GNOME needs the
 [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
 extension. Without a tray, closing the window quits the app as before.
@@ -268,11 +296,16 @@ doubletake-ctl pin <PIN-or-password>
 doubletake-ctl disconnect [target]
 doubletake-ctl mute [target]
 doubletake-ctl unmute [target]
+doubletake-ctl freeze | unfreeze
+doubletake-ctl blackout | unblackout
 ```
 
 - `disconnect` without a target stops all active streams.
 - `disconnect <target>` stops only that receiver.
 - `mute`/`unmute` can operate globally or per target.
+- `freeze`/`unfreeze` and `blackout`/`unblackout` apply to all receivers. See
+  [Freeze, Blackout and Mute](#freeze-blackout-and-mute). `status` reports
+  them as `video_frozen` and `video_black`.
 - `pin` retains its historical command name, but submits whichever credential
   the daemon requests: an on-screen PIN or a configured password. It is
   targetless and therefore requires exactly one waiting receiver; use

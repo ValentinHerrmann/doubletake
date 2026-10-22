@@ -1,6 +1,7 @@
 package airplay
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -67,6 +68,30 @@ type BroadcastCapture struct {
 	drainTimeout time.Duration
 
 	sinks []*BroadcastSink
+
+	// holdMu serializes live fan-out with still pictures, so a still never
+	// lands after the keyframe that resumes live video. Lock it before mu.
+	holdMu        sync.Mutex
+	codec         VideoCodec
+	still         *stillConfig // nil for captures without an encoder to reuse
+	stillCtx      context.Context
+	stillCancel   context.CancelFunc
+	stillInterval time.Duration
+	encodeStillFn func(ctx context.Context, hold VideoHold, width, height int, gop [][]byte) ([]byte, error)
+	hold          VideoHold
+	awaitKeyframe bool   // a hold ended; resume at the next keyframe
+	stillGen      uint64 // bumped by every transition; stops older still senders
+	stillUnit     []byte // still currently repeated, for sinks that attach
+	frozenUnit    []byte // picture of the current freeze
+	blackUnit     []byte // cached black picture of blackWidth x blackHeight
+	blackWidth    int
+	blackHeight   int
+	gop           [][]byte // live access units since the last keyframe
+	gopBytes      int
+	width, height int       // coded size from the last keyframe's SPS
+	lastPTS       time.Time // capture time of the last live unit read
+	lastArrival   time.Time // when it was read
+	lastSentPTS   time.Time // latest PTS queued to the sinks, live or still
 }
 
 // BroadcastSink is a reader end of a BroadcastCapture. It satisfies the same
@@ -140,13 +165,21 @@ func NewBroadcastCaptureWithFrameRate(src *ScreenCapture, fps int) *BroadcastCap
 	if fps <= 0 {
 		fps = 30
 	}
-	return &BroadcastCapture{
+	bc := &BroadcastCapture{
 		src:           src,
 		frames:        src != nil && src.frames != nil,
 		frameDuration: time.Second / time.Duration(fps),
 		done:          make(chan struct{}),
 		drainTimeout:  broadcastSinkDrainTimeout,
+		codec:         VideoCodecH264,
+		stillInterval: stillRepeatInterval,
 	}
+	bc.stillCtx, bc.stillCancel = context.WithCancel(context.Background())
+	if src != nil && src.still != nil {
+		bc.still = src.still
+		bc.codec = normalizeVideoCodec(src.still.encoder.codec)
+	}
+	return bc
 }
 
 // AddSink registers a shared fan-out reader before or while Run is active. A
@@ -155,6 +188,8 @@ func NewBroadcastCaptureWithFrameRate(src *ScreenCapture, fps int) *BroadcastCap
 // invariant even if a caller accidentally mixes the two modes.
 func (bc *BroadcastCapture) AddSink() *BroadcastSink {
 	s := newBroadcastSinkWithPolicy(bc, false)
+	bc.holdMu.Lock()
+	defer bc.holdMu.Unlock()
 	bc.mu.Lock()
 	if bc.stopped || bc.exclusive {
 		bc.mu.Unlock()
@@ -164,7 +199,19 @@ func (bc *BroadcastCapture) AddSink() *BroadcastSink {
 	s.startSequence = bc.sequence + 1
 	bc.sinks = append(bc.sinks, s)
 	bc.mu.Unlock()
+	bc.sendCurrentStillLocked(s)
 	return s
+}
+
+// sendCurrentStillLocked gives a sink that attaches during a hold the still
+// at once instead of at the next repeat. Must hold bc.holdMu.
+func (bc *BroadcastCapture) sendCurrentStillLocked(s *BroadcastSink) {
+	if bc.stillUnit == nil {
+		return
+	}
+	if err := s.enqueueFrame(VideoAccessUnit{AnnexB: bc.stillUnit, PTS: bc.stillPTSLocked()}); err != nil {
+		bc.RemoveSink(s)
+	}
 }
 
 // AddBackpressuredSink registers a sink for a single-destination caller. It
@@ -174,6 +221,8 @@ func (bc *BroadcastCapture) AddSink() *BroadcastSink {
 // fails if any sink has already claimed the capture.
 func (bc *BroadcastCapture) AddBackpressuredSink() (*BroadcastSink, error) {
 	s := newBroadcastSinkWithPolicy(bc, true)
+	bc.holdMu.Lock()
+	defer bc.holdMu.Unlock()
 	bc.mu.Lock()
 	if bc.stopped {
 		bc.mu.Unlock()
@@ -189,6 +238,7 @@ func (bc *BroadcastCapture) AddBackpressuredSink() (*BroadcastSink, error) {
 	s.startSequence = bc.sequence + 1
 	bc.sinks = append(bc.sinks, s)
 	bc.mu.Unlock()
+	bc.sendCurrentStillLocked(s)
 	return s, nil
 }
 
@@ -273,22 +323,26 @@ func (bc *BroadcastCapture) runFrames() error {
 
 		frame, readErr := bc.src.ReadVideoAccessUnit()
 		if len(frame.AnnexB) > 0 {
-			bc.mu.Lock()
-			sinks := make([]*BroadcastSink, 0, len(bc.sinks))
-			for _, sink := range bc.sinks {
-				if sink.startSequence <= sequence {
-					sinks = append(sinks, sink)
+			bc.holdMu.Lock()
+			if bc.recordLiveFrameLocked(frame) {
+				bc.mu.Lock()
+				sinks := make([]*BroadcastSink, 0, len(bc.sinks))
+				for _, sink := range bc.sinks {
+					if sink.startSequence <= sequence {
+						sinks = append(sinks, sink)
+					}
 				}
-			}
-			bc.mu.Unlock()
+				bc.mu.Unlock()
 
-			for _, sink := range sinks {
-				if err := sink.enqueueFrame(frame); err != nil {
-					// enqueueFrame already published any terminal backlog error
-					// under the sink lock; removal only detaches it from fan-out.
-					bc.RemoveSink(sink)
+				for _, sink := range sinks {
+					if err := sink.enqueueFrame(frame); err != nil {
+						// enqueueFrame already published any terminal backlog error
+						// under the sink lock; removal only detaches it from fan-out.
+						bc.RemoveSink(sink)
+					}
 				}
 			}
+			bc.holdMu.Unlock()
 		}
 		if readErr != nil {
 			bc.finish(readErr)
@@ -300,6 +354,7 @@ func (bc *BroadcastCapture) runFrames() error {
 // finish stops accepting sinks, lets existing sinks drain, and only then
 // publishes BroadcastCapture completion.
 func (bc *BroadcastCapture) finish(err error) {
+	bc.stillCancel()
 	bc.mu.Lock()
 	bc.err = err
 	bc.stopped = true

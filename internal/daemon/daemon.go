@@ -70,6 +70,10 @@ type Response struct {
 	DeviceIP   string `json:"device_ip,omitempty"`
 	HasAudio   bool   `json:"has_audio"`
 	AudioMuted bool   `json:"audio_muted"`
+	// VideoFrozen and VideoBlack report freeze and blackout, which apply to
+	// every stream. Blackout takes precedence while both are on.
+	VideoFrozen bool `json:"video_frozen,omitempty"`
+	VideoBlack  bool `json:"video_black,omitempty"`
 	// NeedsPIN is retained for older clients and is true only for an on-screen
 	// PIN. NeedsCredential and CredentialKind distinguish configured passwords.
 	NeedsPIN        bool           `json:"needs_pin,omitempty"`
@@ -334,6 +338,9 @@ type Daemon struct {
 	captureGroups   map[videoCaptureKey]*videoCaptureGroup // one encoder/fan-out per advertised canvas
 	capturePortalMu sync.Mutex                             // serializes interactive Wayland portal access
 	captureStartMu  sync.Mutex                             // serializes exact-size group publication/encoder startup
+	videoHoldMu     sync.Mutex                             // serializes freeze/blackout changes with capture group startup; lock before mu
+	videoFrozen     bool                                   // freeze requested for all streams
+	videoBlack      bool                                   // blackout requested for all streams
 	lastError       string                                 // most recent asynchronous stream failure
 	lastErrorTarget string                                 // target associated with lastError; empty for capture-wide errors
 
@@ -584,6 +591,10 @@ func (d *Daemon) handleRequest(req Request) Response {
 		return d.handleSetMute(req, true)
 	case "unmute":
 		return d.handleSetMute(req, false)
+	case "freeze", "unfreeze":
+		return d.handleSetVideoHold(func() { d.videoFrozen = req.Cmd == "freeze" })
+	case "blackout", "unblackout":
+		return d.handleSetVideoHold(func() { d.videoBlack = req.Cmd == "blackout" })
 	default:
 		return Response{OK: false, Error: "unknown command: " + req.Cmd}
 	}
@@ -678,6 +689,8 @@ func (d *Daemon) statusResponseLocked(ok bool, errMsg string) Response {
 		NeedsPIN:        credentialKind == CredentialKindPIN,
 		NeedsCredential: credentialKind != "",
 		CredentialKind:  credentialKind,
+		VideoFrozen:     d.videoFrozen,
+		VideoBlack:      d.videoBlack,
 		Error:           errMsg,
 		Streams:         streams,
 	}
@@ -1473,6 +1486,8 @@ func (d *Daemon) getOrStartPreparedCaptureGroup(ctx context.Context, entry *acti
 	}
 
 	broadcast := airplay.NewBroadcastCaptureWithFrameRate(capture, d.cfg.FPS)
+	d.videoHoldMu.Lock()
+	defer d.videoHoldMu.Unlock()
 	d.mu.Lock()
 	if d.captureGroups[key] != group || d.streams[entry.deviceIP] != entry || entry.captureGroup != group {
 		d.mu.Unlock()
@@ -1483,8 +1498,10 @@ func (d *Daemon) getOrStartPreparedCaptureGroup(ctx context.Context, entry *acti
 	group.broadcast = broadcast
 	group.capture = capture
 	group.minimumVideoLead = minimumVideoLead
+	hold := d.videoHoldLocked()
 	d.streamWorkers.Add(1)
 	d.mu.Unlock()
+	applyVideoHold(broadcast, hold)
 
 	go func() {
 		defer d.streamWorkers.Done()
@@ -1588,6 +1605,8 @@ func (d *Daemon) getOrStartCaptureGroup(entry *activeStream, restoreToken, devic
 	}
 
 	newBC := airplay.NewBroadcastCaptureWithFrameRate(capture, d.cfg.FPS)
+	d.videoHoldMu.Lock()
+	defer d.videoHoldMu.Unlock()
 	d.mu.Lock()
 	if d.captureGroups[key] != group || d.streams[entry.deviceIP] != entry || entry.captureGroup != group {
 		d.mu.Unlock()
@@ -1597,10 +1616,12 @@ func (d *Daemon) getOrStartCaptureGroup(entry *activeStream, restoreToken, devic
 	}
 	group.broadcast = newBC
 	group.capture = capture
+	hold := d.videoHoldLocked()
 	// Add while holding d.mu so Shutdown cannot begin waiting between publishing
 	// the capture and registering its completion worker.
 	d.streamWorkers.Add(1)
 	d.mu.Unlock()
+	applyVideoHold(newBC, hold)
 
 	go func() {
 		defer d.streamWorkers.Done()
@@ -1677,6 +1698,10 @@ func (d *Daemon) detachCaptureGroupLocked(group *videoCaptureGroup) daemonCleanu
 	}
 	delete(d.captureGroups, group.key)
 	cleanup.addCaptureGroup(group)
+	if len(d.captureGroups) == 0 {
+		// Nothing is casting any more: the next cast starts live.
+		d.videoFrozen, d.videoBlack = false, false
+	}
 	return cleanup
 }
 
@@ -1818,6 +1843,82 @@ func (d *Daemon) handleSetMute(req Request, muted bool) Response {
 	}
 	defer d.mu.Unlock()
 	return d.statusResponseLocked(true, "")
+}
+
+// handleSetVideoHold applies a freeze or blackout change to every capture
+// group. Groups started later pick the hold up when they are published.
+func (d *Daemon) handleSetVideoHold(change func()) Response {
+	d.videoHoldMu.Lock()
+	defer d.videoHoldMu.Unlock()
+
+	d.mu.Lock()
+	streaming := false
+	for _, s := range d.streams {
+		if s.state == StateStreaming {
+			streaming = true
+			break
+		}
+	}
+	if !streaming {
+		resp := d.statusResponseLocked(false, "not currently streaming")
+		d.mu.Unlock()
+		return resp
+	}
+	frozen, black := d.videoFrozen, d.videoBlack
+	change()
+	hold := d.videoHoldLocked()
+	broadcasts := make([]*airplay.BroadcastCapture, 0, len(d.captureGroups))
+	for _, group := range d.captureGroups {
+		if group.broadcast != nil {
+			broadcasts = append(broadcasts, group.broadcast)
+		}
+	}
+	d.mu.Unlock()
+
+	var lastErr error
+	for _, broadcast := range broadcasts {
+		if err := broadcast.SetVideoHold(hold); err != nil {
+			lastErr = err
+		}
+	}
+
+	if lastErr != nil {
+		d.mu.Lock()
+		d.videoFrozen, d.videoBlack = frozen, black
+		previous := d.videoHoldLocked()
+		d.mu.Unlock()
+		for _, broadcast := range broadcasts {
+			_ = broadcast.SetVideoHold(previous)
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return d.statusResponseLocked(false, "failed to change video: "+lastErr.Error())
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.statusResponseLocked(true, "")
+}
+
+// videoHoldLocked is the hold every capture group should show. Must be called
+// with d.mu held.
+func (d *Daemon) videoHoldLocked() airplay.VideoHold {
+	switch {
+	case d.videoBlack:
+		return airplay.HoldBlack
+	case d.videoFrozen:
+		return airplay.HoldFreeze
+	default:
+		return airplay.HoldNone
+	}
+}
+
+func applyVideoHold(broadcast *airplay.BroadcastCapture, hold airplay.VideoHold) {
+	if hold == airplay.HoldNone {
+		return
+	}
+	if err := broadcast.SetVideoHold(hold); err != nil {
+		log.Printf("[daemon] %s for new capture: %v", hold, err)
+	}
 }
 
 // detachAllLocked removes every active stream and capture group atomically and

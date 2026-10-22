@@ -33,6 +33,11 @@ type view struct {
 	canStop    bool
 	credential daemon.CredentialKind // non-empty while a receiver waits for a PIN/password
 	credTarget string                // receiver IP the credential is for
+	casting    bool                  // at least one receiver shows the stream
+	hasAudio   bool                  // the stream carries audio that can be muted
+	muted      bool
+	frozen     bool
+	black      bool
 }
 
 // buildView maps a daemon status and device list to the window state.
@@ -68,7 +73,9 @@ func buildView(status, devices *daemon.Response, pollErr error, actionErr string
 		v.busy, v.canStop = true, true
 		v.message = msgPickerHint
 	case daemon.StateStreaming:
-		v.busy, v.canStop = true, true
+		v.busy, v.canStop, v.casting = true, true, true
+		v.hasAudio, v.muted = status.HasAudio, status.AudioMuted
+		v.frozen, v.black = status.VideoFrozen, status.VideoBlack
 		v.message = fmt.Sprintf("Casting to %s.", firstNonEmpty(status.Device, status.DeviceIP, "the receiver"))
 	default:
 		v.canChoose = len(v.devices) > 0

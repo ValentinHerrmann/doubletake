@@ -99,6 +99,10 @@ type ReceiverStats struct {
 	VideoBytes        uint64
 	VideoDecrypted    uint64
 	VideoCryptoErrors uint64
+	VideoCodecFrames  uint64 // decoder configurations (SPS/PPS or VPS/SPS/PPS)
+	VideoFrames       uint64 // pictures
+	VideoKeyFrames    uint64 // pictures that start a GOP
+	VideoMalformed    uint64
 	// VideoWidth and VideoHeight are the largest codec-header canvas observed.
 	VideoWidth    uint64
 	VideoHeight   uint64
@@ -1568,6 +1572,10 @@ func (s *ReceiverServer) Stats() ReceiverStats {
 	stats.VideoBytes = media.VideoBytes
 	stats.VideoDecrypted = media.VideoDecrypted
 	stats.VideoCryptoErrors = media.VideoCryptoErrors
+	stats.VideoCodecFrames = media.VideoCodecFrames
+	stats.VideoFrames = media.VideoFrames
+	stats.VideoKeyFrames = media.VideoKeyFrames
+	stats.VideoMalformed = media.VideoMalformed
 	stats.VideoWidth = media.VideoWidth
 	stats.VideoHeight = media.VideoHeight
 	stats.AudioPackets = media.AudioPackets

@@ -47,18 +47,29 @@ func waitForTray(timeout time.Duration) bool {
 // tray holds the menu items the window updates. Its methods run on the GTK
 // main loop; systray locks internally.
 type tray struct {
-	stop, autostart *systray.MenuItem
-	tooltip         string
+	stop, autostart, keepAwake *systray.MenuItem
+	casting                    map[string]*systray.MenuItem // freeze, blackout and mute
+	muteHidden                 bool
+	tooltip                    string
 }
 
 // update mirrors the window state. It runs on every poll, so it only touches
 // systray (which signals the tray host over D-Bus) when something changed.
 func (t *tray) update(v view) {
-	if v.canStop == t.stop.Disabled() {
-		if v.canStop {
-			t.stop.Enable()
+	setEnabled(t.stop, v.canStop)
+	for name, on := range map[string]bool{"freeze": v.frozen, "blackout": v.black, "mute": v.muted} {
+		item := t.casting[name]
+		setEnabled(item, v.casting)
+		setChecked(item, on)
+	}
+	// A cast without audio has nothing to mute. systray has no visibility
+	// getter, so track it to signal the host only on a change.
+	if hide := v.casting && !v.hasAudio; hide != t.muteHidden {
+		t.muteHidden = hide
+		if hide {
+			t.casting["mute"].Hide()
 		} else {
-			t.stop.Disable()
+			t.casting["mute"].Show()
 		}
 	}
 	if tip := "Doubletake – " + v.message; tip != t.tooltip {
@@ -68,10 +79,30 @@ func (t *tray) update(v view) {
 }
 
 func (t *tray) setAutostart(on bool) {
-	if on {
-		t.autostart.Check()
-	} else {
-		t.autostart.Uncheck()
+	setChecked(t.autostart, on)
+}
+
+func (t *tray) setKeepAwake(on bool) {
+	setChecked(t.keepAwake, on)
+}
+
+func setEnabled(item *systray.MenuItem, on bool) {
+	if on == item.Disabled() {
+		if on {
+			item.Enable()
+		} else {
+			item.Disable()
+		}
+	}
+}
+
+func setChecked(item *systray.MenuItem, on bool) {
+	if on != item.Checked() {
+		if on {
+			item.Check()
+		} else {
+			item.Uncheck()
+		}
 	}
 }
 
@@ -90,10 +121,23 @@ func startTray(app *gtk.Application, w *window) {
 		systray.SetTitle("Doubletake")
 		show := systray.AddMenuItem("Show Doubletake", "")
 		stop := systray.AddMenuItem("Stop casting", "")
+		t := &tray{stop: stop, casting: map[string]*systray.MenuItem{}}
+		for _, c := range castingControls {
+			item := systray.AddMenuItemCheckbox(c.label, c.tooltip, false)
+			item.Disable()
+			t.casting[c.action] = item
+			action := c.action
+			go func() {
+				for range item.ClickedCh {
+					glib.IdleAdd(func() { app.ActivateAction(action, nil) })
+				}
+			}()
+		}
 		systray.AddSeparator()
 		auto := systray.AddMenuItemCheckbox("Start on login", "", autostartEnabled())
+		awake := systray.AddMenuItemCheckbox("Keep screen awake while casting", "", loadSettings().KeepAwake)
 		quit := systray.AddMenuItem("Quit", "")
-		t := &tray{stop: stop, autostart: auto}
+		t.autostart, t.keepAwake = auto, awake
 		glib.IdleAdd(func() {
 			w.tray = t
 			t.update(w.view)
@@ -108,6 +152,8 @@ func startTray(app *gtk.Application, w *window) {
 					glib.IdleAdd(func() { w.act(w.client.Disconnect) })
 				case <-auto.ClickedCh:
 					glib.IdleAdd(func() { app.ActivateAction("autostart", nil) })
+				case <-awake.ClickedCh:
+					glib.IdleAdd(func() { app.ActivateAction("keepawake", nil) })
 				case <-quit.ClickedCh:
 					glib.IdleAdd(app.Quit)
 				}

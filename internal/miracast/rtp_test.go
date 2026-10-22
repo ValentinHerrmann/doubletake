@@ -42,12 +42,3 @@ func TestRTPTSWriterGroupsSevenPackets(t *testing.T) {
 		t.Fatal("empty flush sent a datagram")
 	}
 }
-
-func TestHasIDR(t *testing.T) {
-	if !hasIDR([]byte{0, 0, 0, 1, 0x09, 0xf0, 0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x65}) {
-		t.Fatal("IDR not detected")
-	}
-	if hasIDR([]byte{0, 0, 0, 1, 0x41, 0x9a}) {
-		t.Fatal("non-IDR slice detected as IDR")
-	}
-}
