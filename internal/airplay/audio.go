@@ -147,6 +147,7 @@ type AudioCapture struct {
 	pcmMaxZeroRun   uint64
 	eldMu           sync.Mutex
 	eld             *eldEncoder
+	route           *audioRoute // virtual output while casting; nil for test tone or fallback
 }
 
 var audioTimestampFallbackWarning sync.Once
@@ -271,6 +272,7 @@ func StartAudioCapture(ctx context.Context, testTone bool, codec AudioCodec) (*A
 
 	// Detect audio source
 	var srcArgs []string
+	var route *audioRoute
 	if testTone {
 		srcArgs = []string{"audiotestsrc", "wave=sine", "freq=440", "is-live=true",
 			fmt.Sprintf("samplesperbuffer=%d", codecSPF)}
@@ -280,7 +282,14 @@ func StartAudioCapture(ctx context.Context, testTone bool, codec AudioCodec) (*A
 		hasPulseSource := exec.Command("gst-inspect-1.0", "pulsesrc").Run() == nil
 		monitor := ""
 		if hasPulseSource {
-			monitor = detectPulseMonitor()
+			var err error
+			if monitor, err = defaultAudioRoute.acquire(); err == nil {
+				route = defaultAudioRoute
+				dbg("[AUDIO] casting through the Doubletake output")
+			} else {
+				log.Printf("[AUDIO] cannot add the Doubletake output (%v); capturing the default output at full volume", err)
+				monitor = detectPulseMonitor()
+			}
 		}
 		var source string
 		srcArgs, source = selectAudioMonitorSource(hasPulseSource, monitor, hasPipeWireSource, codec)
@@ -301,7 +310,14 @@ func StartAudioCapture(ctx context.Context, testTone bool, codec AudioCodec) (*A
 		cancel: cancel,
 		waitCh: make(chan struct{}),
 		codec:  codec,
+		route:  route,
 	}
+	started := false
+	defer func() {
+		if !started && route != nil {
+			route.release()
+		}
+	}()
 	if codec == AudioCodecALAC {
 		ac.alac = &alacEncoder{}
 		dbg("[AUDIO] using compressed ALAC")
@@ -356,6 +372,7 @@ func StartAudioCapture(ctx context.Context, testTone bool, codec AudioCodec) (*A
 		close(ac.waitCh)
 	}()
 
+	started = true
 	return ac, nil
 }
 
@@ -402,6 +419,9 @@ func (ac *AudioCapture) readFramePosition(buf []byte) (int, audioPCMFramePositio
 	}
 	if err != nil {
 		return 0, audioPCMFramePosition{}, err
+	}
+	if ac.route != nil {
+		ac.route.apply(pcm)
 	}
 	if DebugMode() {
 		ac.recordPCMLevels(pcm)
@@ -562,6 +582,9 @@ func (ac *AudioCapture) Stop() {
 		ac.eld = nil
 	}
 	ac.eldMu.Unlock()
+	if ac.route != nil {
+		ac.route.release()
+	}
 }
 
 // encodeALACVerbatim produces a verbatim (uncompressed) ALAC frame from

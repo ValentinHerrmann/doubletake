@@ -100,6 +100,17 @@ with **Stop casting** or `doubletake-ctl disconnect`. Only one window runs per
 user; starting the app again raises it and, with `-source`, switches its
 capture source.
 
+### Audio
+
+While casting, audio behaves like a plugged-in HDMI display. A **Doubletake**
+output device appears and becomes the default; your speakers go quiet, and
+the system volume slider and mute control how loud the receiver plays. It
+starts at the volume your speakers had. When the last cast stops, the
+previous output returns. To hear a cast locally, pick your speakers as the
+output while casting: the receiver then gets silence. This needs `pactl`
+(PulseAudio or PipeWire's pipewire-pulse); without it, doubletake falls back
+to capturing the default output at full volume.
+
 ### Freeze, Blackout and Mute
 
 While casting, three toggles under the receiver list change what every
