@@ -309,6 +309,16 @@ func (w *window) updateInhibit() {
 	}
 }
 
+// hideWhenConnected moves the window to the tray once a connection set up
+// from connecting or a PIN prompt starts casting. A cast already running when
+// the app starts does not hide it. Without a tray host it stays shown, since
+// it could not be brought back.
+func (w *window) hideWhenConnected(prev, v view) {
+	if prev.busy && !prev.casting && v.casting && w.IsVisible() && w.tray != nil && trayAvailable() {
+		w.SetVisible(false)
+	}
+}
+
 // toggleVisible shows a hidden window and hides a shown one (tray click).
 func (w *window) toggleVisible() {
 	if w.IsVisible() {
@@ -410,6 +420,7 @@ func (w *window) render(v view) {
 	if w.tray != nil {
 		w.tray.update(v)
 	}
+	w.hideWhenConnected(prev, v)
 
 	w.pinBox.SetVisible(v.credential != "")
 	if v.credential != "" && v.credential != prev.credential {

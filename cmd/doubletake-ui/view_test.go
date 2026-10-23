@@ -47,6 +47,18 @@ func TestBuildViewCredential(t *testing.T) {
 	}
 }
 
+func TestBuildViewNamesEveryReceiver(t *testing.T) {
+	status := &daemon.Response{State: daemon.StateStreaming, Device: "TV", Streams: []daemon.StreamInfo{
+		{Device: "TV", DeviceIP: "192.0.2.1", State: daemon.StateStreaming},
+		{Device: "Projector", DeviceIP: "p2p:AA", State: daemon.StateStreaming},
+		{Device: "Kitchen", DeviceIP: "192.0.2.3", State: daemon.StateConnecting},
+	}}
+	v := buildView(status, nil, nil, "")
+	if v.castingTo != "TV, Projector" || v.message != "Casting to TV, Projector." {
+		t.Fatalf("multi-receiver view = %+v", v)
+	}
+}
+
 func TestBuildViewStreamingAndErrors(t *testing.T) {
 	streaming := buildView(&daemon.Response{State: daemon.StateStreaming, Device: "TV"}, nil, nil, "")
 	if streaming.badge != "Casting" || streaming.message != "Casting to TV." || !streaming.canStop || streaming.canChoose {

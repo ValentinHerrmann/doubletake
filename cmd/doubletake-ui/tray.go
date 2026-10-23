@@ -47,15 +47,32 @@ func waitForTray(timeout time.Duration) bool {
 // tray holds the menu items the window updates. Its methods run on the GTK
 // main loop; systray locks internally.
 type tray struct {
-	stop, autostart, keepAwake *systray.MenuItem
-	casting                    map[string]*systray.MenuItem // freeze, blackout and mute
-	muteHidden                 bool
-	tooltip                    string
+	receivers, stop, autostart, keepAwake *systray.MenuItem
+	casting                               map[string]*systray.MenuItem // freeze, blackout and mute
+	muteHidden                            bool
+	receiversText                         string // "" while the receivers item is hidden
+	tooltip                               string
 }
 
 // update mirrors the window state. It runs on every poll, so it only touches
 // systray (which signals the tray host over D-Bus) when something changed.
 func (t *tray) update(v view) {
+	// systray has no visibility or title getters, so track the shown text.
+	receivers := ""
+	if v.casting {
+		receivers = "Casting to " + v.castingTo
+	}
+	if receivers != t.receiversText {
+		if receivers == "" {
+			t.receivers.Hide()
+		} else {
+			t.receivers.SetTitle(receivers)
+			if t.receiversText == "" {
+				t.receivers.Show()
+			}
+		}
+		t.receiversText = receivers
+	}
 	setEnabled(t.stop, v.canStop)
 	for name, on := range map[string]bool{"freeze": v.frozen, "blackout": v.black, "mute": v.muted} {
 		item := t.casting[name]
@@ -119,9 +136,13 @@ func startTray(app *gtk.Application, w *window) {
 	start, _ := systray.RunWithExternalLoop(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTitle("Doubletake")
+		// An informational, disabled entry shown only while casting.
+		receivers := systray.AddMenuItem("", "")
+		receivers.Disable()
+		receivers.Hide()
 		show := systray.AddMenuItem("Show Doubletake", "")
 		stop := systray.AddMenuItem("Stop casting", "")
-		t := &tray{stop: stop, casting: map[string]*systray.MenuItem{}}
+		t := &tray{receivers: receivers, stop: stop, casting: map[string]*systray.MenuItem{}}
 		for _, c := range castingControls {
 			item := systray.AddMenuItemCheckbox(c.label, c.tooltip, false)
 			item.Disable()

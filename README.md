@@ -138,8 +138,11 @@ awake.
 
 ### System tray and start on login
 
-With a system tray, closing the window hides it to a tray icon. Click the
-icon to show or hide the window. Its menu has **Show Doubletake**, **Stop
+With a system tray, closing the window hides it to a tray icon. The window
+also hides there by itself once a connection starts casting; it stays open
+while connecting, so the screen-sharing dialog and PIN prompts remain
+reachable. Click the icon to show or hide the window. While casting, the menu
+starts with the receivers being cast to. It has **Show Doubletake**, **Stop
 casting**, **Freeze**, **Blackout**, **Mute**, **Start on login**, **Keep
 screen awake while casting** and **Quit**. KDE Plasma has a tray built in.
 GNOME needs the
