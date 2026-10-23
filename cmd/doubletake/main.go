@@ -109,8 +109,8 @@ func main() {
 	airplay.SetDebugMode(*debug)
 
 	if *daemonize {
-		// The daemon keeps its historical monitor-only default (and saved
-		// screen choice) unless -source is given explicitly.
+		// Without an explicit -source, the daemon offers screens and windows
+		// in the system's picker each time.
 		daemonSource := uint32(0)
 		flag.Visit(func(f *flag.Flag) {
 			if f.Name == "source" {

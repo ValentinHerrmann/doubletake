@@ -28,19 +28,24 @@ func TestHandleConnectRejectsUnknownSource(t *testing.T) {
 	}
 }
 
-func TestMonitorSourceGatesRestoreToken(t *testing.T) {
+func TestRememberedScreenGatesRestoreToken(t *testing.T) {
+	saved := &airplay.SavedCredentials{RestoreToken: "screen"}
 	for _, test := range []struct {
 		sourceTypes uint32
-		want        bool
+		want        string
 	}{
-		{0, true},
-		{airplay.SourceMonitor, true},
-		{airplay.SourceWindow, false},
-		{airplay.SourceMonitor | airplay.SourceWindow, false},
+		{0, "screen"},
+		{airplay.SourceMonitor, "screen"},
+		{airplay.SourceMonitor | airplay.SourceWindow, ""},
+		{airplay.SourceWindow, ""},
 	} {
-		if got := monitorSource(test.sourceTypes); got != test.want {
-			t.Errorf("monitorSource(%d) = %v, want %v", test.sourceTypes, got, test.want)
+		entry := &activeStream{sourceTypes: test.sourceTypes}
+		if got := entry.rememberedScreen(saved); got != test.want {
+			t.Errorf("rememberedScreen(types %d) = %q, want %q", test.sourceTypes, got, test.want)
 		}
+	}
+	if got := (&activeStream{}).rememberedScreen(nil); got != "" {
+		t.Errorf("rememberedScreen(nil) = %q", got)
 	}
 }
 

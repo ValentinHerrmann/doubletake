@@ -51,6 +51,7 @@ type tray struct {
 	casting                               map[string]*systray.MenuItem // freeze, blackout and mute
 	muteHidden                            bool
 	receiversText                         string // "" while the receivers item is hidden
+	stopText                              string
 	tooltip                               string
 }
 
@@ -74,6 +75,10 @@ func (t *tray) update(v view) {
 		t.receiversText = receivers
 	}
 	setEnabled(t.stop, v.canStop)
+	if v.stopLabel != t.stopText {
+		t.stopText = v.stopLabel
+		t.stop.SetTitle(v.stopLabel)
+	}
 	for name, on := range map[string]bool{"freeze": v.frozen, "blackout": v.black, "mute": v.muted} {
 		item := t.casting[name]
 		setEnabled(item, v.casting)

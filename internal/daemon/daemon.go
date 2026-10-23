@@ -112,7 +112,7 @@ type Config struct {
 	DirectKey   bool
 	NoAudio     bool
 	ShowCursor  bool
-	SourceTypes uint32 // default portal source-type mask; zero means airplay.SourceMonitor
+	SourceTypes uint32 // default portal source-type mask; zero offers screens and windows
 	Code        string // default pairing/Digest credential; request Pin overrides it
 }
 
@@ -753,7 +753,7 @@ func (d *Daemon) handleConnect(req Request) Response {
 		sourceTypes = parsed
 	}
 	if sourceTypes == 0 {
-		sourceTypes = airplay.SourceMonitor
+		sourceTypes = airplay.SourceMonitor | airplay.SourceWindow
 	}
 
 	d.mu.Lock()
@@ -995,12 +995,7 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 
 	deviceID := info.DeviceID
 	savedCreds := d.credStore.Lookup(deviceID)
-	// The saved restore token remembers a monitor choice; reusing it for
-	// another source type would silently skip the picker.
-	screenCastRestoreToken := ""
-	if savedCreds != nil && monitorSource(entry.sourceTypes) {
-		screenCastRestoreToken = savedCreds.RestoreToken
-	}
+	screenCastRestoreToken := entry.rememberedScreen(savedCreds)
 
 	reconnect := func() error {
 		_ = client.Close()
@@ -1215,8 +1210,8 @@ func (d *Daemon) connectAndStream(ctx context.Context, entry *activeStream, targ
 		if startErr != nil {
 			if streamCfg.VideoCodec == airplay.VideoCodecAuto && codec == airplay.VideoCodecHEVC {
 				restoreToken := screenCastRestoreToken
-				if saved := d.credStore.Lookup(deviceID); saved != nil && saved.RestoreToken != "" && monitorSource(entry.sourceTypes) {
-					restoreToken = saved.RestoreToken
+				if saved := entry.rememberedScreen(d.credStore.Lookup(deviceID)); saved != "" {
+					restoreToken = saved
 				}
 				replacement, fallbackErr := d.prepareVideoCapture(ctx, entry.sourceTypes, restoreToken, deviceID, "", airplay.VideoCodecH264)
 				if fallbackErr != nil {
@@ -1362,10 +1357,19 @@ func retryMirrorSetupAfterDigestChallenge(
 }
 
 // monitorSource reports whether a portal source-type mask offers only
-// monitors (zero means monitor). Only then is a saved restore token, which
-// remembers a monitor choice, safe to reuse.
+// monitors (zero means monitor). Only such a request remembers the chosen
+// screen per receiver; every other one shows the system's picker each time.
 func monitorSource(sourceTypes uint32) bool {
 	return sourceTypes == 0 || sourceTypes == airplay.SourceMonitor
+}
+
+// rememberedScreen returns the saved screen choice to restore for this
+// stream, or "" when the screen-sharing dialog must appear.
+func (s *activeStream) rememberedScreen(saved *airplay.SavedCredentials) string {
+	if saved == nil || !monitorSource(s.sourceTypes) {
+		return ""
+	}
+	return saved.RestoreToken
 }
 
 // normalizedVideoCaptureKey matches the even canvas which the capture pipeline

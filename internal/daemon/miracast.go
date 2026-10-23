@@ -203,10 +203,7 @@ func (d *Daemon) connectAndStreamMiracast(ctx context.Context, entry *activeStre
 		cleanup.run()
 	}
 
-	restoreToken := ""
-	if saved := d.credStore.Lookup(target); saved != nil && monitorSource(entry.sourceTypes) {
-		restoreToken = saved.RestoreToken
-	}
+	restoreToken := entry.rememberedScreen(d.credStore.Lookup(target))
 	preparation, err := d.prepareVideoCapture(ctx, entry.sourceTypes, restoreToken, target, miracast.H264Profile, airplay.VideoCodecH264)
 	if err != nil {
 		fail(fmt.Sprintf("prepare capture failed: %v", err))

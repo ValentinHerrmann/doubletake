@@ -2493,6 +2493,15 @@ func requestScreencast(ctx context.Context, restoreToken string, showCursor bool
 
 	portalObject := conn.Object(portalBusName, portalObjectPath)
 	portalVersion := screenCastPortalVersion(ctx, portalObject)
+	if sourceTypes == 0 {
+		sourceTypes = SourceMonitor
+	}
+	// Only a screens-only request may be remembered and restored without
+	// the dialog; every other request shows the system's picker each time.
+	remember := sourceTypes == SourceMonitor
+	if available, ok := screenCastAvailableSourceTypes(ctx, portalObject); ok {
+		sourceTypes = offeredSourceTypes(sourceTypes, available)
+	}
 	baseToken, err := newPortalHandleToken()
 	if err != nil {
 		return 0, nil, nil, "", err
@@ -2552,10 +2561,6 @@ func requestScreencast(ctx context.Context, restoreToken string, showCursor bool
 		cursorMode = 2
 	}
 
-	if sourceTypes == 0 {
-		sourceTypes = SourceMonitor
-	}
-
 	// Select sources
 	selectToken := baseToken + "_select"
 	selectPath, err := portalPathForToken(conn, portalRequestPathPrefix, selectToken)
@@ -2568,7 +2573,7 @@ func requestScreencast(ctx context.Context, restoreToken string, showCursor bool
 		"multiple":     dbus.MakeVariant(false),
 		"cursor_mode":  dbus.MakeVariant(cursorMode),
 	}
-	if portalVersion >= 4 {
+	if portalVersion >= 4 && remember {
 		selectOpts["persist_mode"] = dbus.MakeVariant(uint32(2))
 		if restoreToken != "" {
 			selectOpts["restore_token"] = dbus.MakeVariant(restoreToken)
@@ -2878,6 +2883,31 @@ func screenCastPortalVersion(ctx context.Context, portal dbus.BusObject) uint32 
 		return 0
 	}
 	return version
+}
+
+// offeredSourceTypes limits a requested source-type mask to what the portal
+// backend supports, so a backend without window capture still shows its
+// screens instead of failing. A request it cannot serve at all falls back to
+// screens.
+func offeredSourceTypes(requested, available uint32) uint32 {
+	if offered := requested & available; offered != 0 {
+		return offered
+	}
+	return SourceMonitor
+}
+
+// screenCastAvailableSourceTypes reports the source types the portal backend
+// supports; ok is false when the portal does not say.
+func screenCastAvailableSourceTypes(ctx context.Context, portal dbus.BusObject) (uint32, bool) {
+	callCtx, cancel := context.WithTimeout(normalizeContext(ctx), portalMethodTimeout)
+	defer cancel()
+	var variant dbus.Variant
+	if err := portal.CallWithContext(callCtx, "org.freedesktop.DBus.Properties.Get", 0,
+		portalScreenCastInterface, "AvailableSourceTypes").Store(&variant); err != nil {
+		return 0, false
+	}
+	types, ok := variant.Value().(uint32)
+	return types, ok
 }
 
 func sessionHandleFromResult(result map[string]dbus.Variant) (dbus.ObjectPath, error) {

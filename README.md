@@ -11,8 +11,10 @@ It adds:
   receiver, enter its PIN and start or stop mirroring.
 - **Freeze, Blackout and Mute** while casting, in the app, its tray menu and
   `doubletake-ctl`, for AirPlay and Miracast receivers.
-- **Capture source choice**: `-source any|monitor|window` on the CLI and the
-  daemon, and a Screen / Window switch in the app.
+- **Capture source choice**: the system's screen-sharing dialog offers screens
+  and windows on every connection. `-source any|monitor|window` limits the
+  choice on the CLI, the daemon and the app; `monitor` remembers the chosen
+  screen per receiver.
 - **Miracast** (experimental): Wi-Fi Direct displays in the same app and
   daemon as AirPlay receivers; see [Miracast](#miracast).
 - **One-line install, update and uninstall** from this fork's releases.
@@ -78,9 +80,9 @@ Start **Doubletake** from the app menu, or run `doubletake-ui`. The window:
 - asks for the PIN shown on the receiver, or its password, when needed;
 - stops with **Stop casting**.
 
-The **Screen / Window** switch chooses what the screen-sharing dialog offers
-for the next connection. **Screen** remembers the chosen screen per
-receiver, so the dialog appears only once.
+Your desktop's screen-sharing dialog asks what to share on every
+connection: a screen or a window, whatever your desktop supports. While
+connecting, **Cancel** stops a connection to the wrong receiver.
 
 ```sh
 doubletake-ui                         # open the window
@@ -235,7 +237,7 @@ doubletake-ctl disconnect
 | `-no-audio` | false | Disable audio streaming |
 | `-test` | false | Use synthetic video source |
 | `-daemonize` | false | Run as background daemon with Unix socket control interface |
-| `-source` | `any` | Wayland capture source offered by the screen-sharing dialog: `any`, `monitor` (remembers the chosen screen) or `window`. With `-daemonize` the default stays `monitor`; a daemon `connect` request may set its own `source` |
+| `-source` | `any` | Wayland capture source offered by the screen-sharing dialog: `any`, `monitor` (remembers the chosen screen) or `window`. With `-daemonize` the default is `any`; a daemon `connect` request may set its own `source` |
 | `-socket` | `$XDG_RUNTIME_DIR/doubletake.sock` | Daemon control socket path |
 | `-miracast` | | Experimental: `list` searches for Miracast displays; a display's P2P address mirrors to it (see [Miracast](#miracast)) |
 | `-debug` | false | Verbose debug logging |

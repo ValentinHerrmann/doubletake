@@ -21,15 +21,6 @@ const pollMillis = 1000
 // the radio off its channel, so none runs while hidden in the tray or casting.
 const miracastSearchEvery = 30 * time.Second
 
-// source is a capture-source toggle; id is the daemon's source name.
-type source struct{ id, label, tooltip string }
-
-// sources lists the capture-source toggles in display order.
-var sources = []source{
-	{"monitor", "Screen", "Cast a screen. Each receiver remembers the screen chosen for it"},
-	{"window", "Window", "Cast one window"},
-}
-
 // window shows the daemon state and turns clicks into daemon requests. Its
 // fields are touched only on the GTK main loop; daemon calls run in
 // goroutines and hand their results back with glib.IdleAdd.
@@ -38,14 +29,13 @@ type window struct {
 	client *daemonclient.Client
 	source string
 
-	badge   *gtk.Label
-	status  *gtk.Label
-	toggles map[string]*gtk.ToggleButton
-	list    *gtk.ListBox
-	pinBox  *gtk.Box
-	pin     *gtk.Entry
-	mute    *gtk.ToggleButton
-	stop    *gtk.Button
+	badge  *gtk.Label
+	status *gtk.Label
+	list   *gtk.ListBox
+	pinBox *gtk.Box
+	pin    *gtk.Entry
+	mute   *gtk.ToggleButton
+	stop   *gtk.Button
 
 	app        *gtk.Application
 	tray       *tray // nil until the tray icon is exported
@@ -71,7 +61,6 @@ func newWindow(app *gtk.Application, opts options) *window {
 		ApplicationWindow: gtk.NewApplicationWindow(app),
 		client:            daemonclient.NewDefault(),
 		source:            opts.source,
-		toggles:           map[string]*gtk.ToggleButton{},
 		app:               app,
 	}
 	w.SetTitle("Doubletake")
@@ -99,27 +88,6 @@ func newWindow(app *gtk.Application, opts options) *window {
 	body.SetMarginStart(12)
 	body.SetMarginEnd(12)
 
-	sourceBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
-	sourceBox.AddCSSClass("linked")
-	sourceBox.SetHomogeneous(true)
-	var group *gtk.ToggleButton
-	for _, s := range sources {
-		id := s.id
-		btn := gtk.NewToggleButtonWithLabel(s.label)
-		btn.SetTooltipText(s.tooltip)
-		btn.SetGroup(group)
-		group = btn
-		btn.SetActive(id == w.source)
-		btn.ConnectToggled(func() {
-			if btn.Active() {
-				w.source = id
-			}
-		})
-		w.toggles[id] = btn
-		sourceBox.Append(btn)
-	}
-	body.Append(sourceBox)
-
 	w.status = gtk.NewLabel(msgStarting)
 	w.status.SetWrap(true)
 	w.status.SetXAlign(0)
@@ -130,10 +98,7 @@ func newWindow(app *gtk.Application, opts options) *window {
 	w.list.AddCSSClass("frame")
 	w.list.ConnectRowActivated(func(row *gtk.ListBoxRow) {
 		if i := row.Index(); i >= 0 && i < len(w.shown) {
-			dev, source := w.shown[i], w.source
-			w.act(func() (*daemon.Response, error) {
-				return w.client.ConnectWithSource(dev.IP, dev.Port, "", source)
-			})
+			w.connect(w.shown[i], w.source)
 		}
 	})
 	scroll := gtk.NewScrolledWindow()
@@ -331,11 +296,11 @@ func (w *window) toggleVisible() {
 	}
 }
 
-// setSource selects a capture source for the next connection.
-func (w *window) setSource(source string) {
-	if btn := w.toggles[source]; btn != nil {
-		btn.SetActive(true)
-	}
+// connect starts casting to a receiver with the given capture source.
+func (w *window) connect(dev daemon.DeviceInfo, source string) {
+	w.act(func() (*daemon.Response, error) {
+		return w.client.ConnectWithSource(dev.IP, dev.Port, "", source)
+	})
 }
 
 // searchMiracast starts a daemon Miracast search when one is due, the window
@@ -412,10 +377,8 @@ func (w *window) render(v view) {
 	} else {
 		w.SetTitle("Doubletake")
 	}
-	for _, btn := range w.toggles {
-		btn.SetSensitive(!v.busy)
-	}
 	w.stop.SetSensitive(v.canStop)
+	w.stop.SetLabel(v.stopLabel)
 	w.renderCasting(v)
 	w.updateInhibit()
 	w.searchMiracast(v)
@@ -458,19 +421,22 @@ func (w *window) renderDevices(v view) {
 	w.shown = v.devices
 	w.list.RemoveAll()
 	for _, d := range v.devices {
-		row := gtk.NewBox(gtk.OrientationVertical, 2)
+		row := gtk.NewBox(gtk.OrientationHorizontal, 6)
 		row.SetMarginTop(6)
 		row.SetMarginBottom(6)
 		row.SetMarginStart(8)
 		row.SetMarginEnd(8)
+		labels := gtk.NewBox(gtk.OrientationVertical, 2)
+		labels.SetHExpand(true)
 		name := gtk.NewLabel(d.Name)
 		name.SetXAlign(0)
 		meta := gtk.NewLabel(deviceDetail(d))
 		meta.SetXAlign(0)
 		meta.AddCSSClass("dim-label")
 		meta.AddCSSClass("caption")
-		row.Append(name)
-		row.Append(meta)
+		labels.Append(name)
+		labels.Append(meta)
+		row.Append(labels)
 		w.list.Append(row)
 	}
 }

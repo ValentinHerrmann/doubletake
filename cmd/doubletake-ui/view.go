@@ -12,7 +12,7 @@ const (
 	msgStarting   = "Starting doubletake…"
 	msgSearching  = "Searching for receivers…"
 	msgChoose     = "Choose a receiver."
-	msgPickerHint = "Connecting… choose what to share when the screen-sharing dialog appears."
+	msgPickerHint = "Connecting to %s… choose what to share when the screen-sharing dialog appears."
 )
 
 var stateLabels = map[daemon.State]string{
@@ -31,6 +31,7 @@ type view struct {
 	canChoose  bool // a receiver can be selected
 	busy       bool // a connection is being set up or running
 	canStop    bool
+	stopLabel  string                // "Cancel" while connecting, else "Stop casting"
 	credential daemon.CredentialKind // non-empty while a receiver waits for a PIN/password
 	credTarget string                // receiver IP the credential is for
 	casting    bool                  // at least one receiver shows the stream
@@ -72,12 +73,12 @@ func buildView(status, devices *daemon.Response, pollErr error, actionErr string
 		}
 	case daemon.StateConnecting:
 		v.busy, v.canStop = true, true
-		v.message = msgPickerHint
+		v.message = fmt.Sprintf(msgPickerHint, receiversIn(status, daemon.StateConnecting, v.devices))
 	case daemon.StateStreaming:
 		v.busy, v.canStop, v.casting = true, true, true
 		v.hasAudio, v.muted = status.HasAudio, status.AudioMuted
 		v.frozen, v.black = status.VideoFrozen, status.VideoBlack
-		v.castingTo = streamingReceivers(status)
+		v.castingTo = receiversIn(status, daemon.StateStreaming, v.devices)
 		v.message = fmt.Sprintf("Casting to %s.", v.castingTo)
 	default:
 		v.canChoose = len(v.devices) > 0
@@ -90,20 +91,33 @@ func buildView(status, devices *daemon.Response, pollErr error, actionErr string
 			v.message = msgChoose
 		}
 	}
+	v.stopLabel = "Stop casting"
+	if v.busy && !v.casting {
+		v.stopLabel = "Cancel"
+	}
 	if actionErr != "" {
 		v.message = actionErr
 	}
 	return v
 }
 
-// streamingReceivers names every receiver showing the stream. Older daemons
-// report only the legacy single-stream fields.
-func streamingReceivers(status *daemon.Response) string {
+// receiversIn names every receiver whose stream is in state. A stream that
+// has not reported its name yet (AirPlay while connecting) is named from the
+// discovered devices. Older daemons report only the legacy single-stream
+// fields.
+func receiversIn(status *daemon.Response, state daemon.State, devices []daemon.DeviceInfo) string {
 	var names []string
 	for _, s := range status.Streams {
-		if s.State == daemon.StateStreaming {
-			names = append(names, firstNonEmpty(s.Device, s.DeviceIP))
+		if s.State != state {
+			continue
 		}
+		name := s.Device
+		for _, d := range devices {
+			if name == "" && d.IP == s.DeviceIP {
+				name = d.Name
+			}
+		}
+		names = append(names, firstNonEmpty(name, s.DeviceIP))
 	}
 	if len(names) == 0 {
 		return firstNonEmpty(status.Device, status.DeviceIP, "the receiver")
