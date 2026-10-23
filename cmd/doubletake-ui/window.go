@@ -21,11 +21,13 @@ const pollMillis = 1000
 // the radio off its channel, so none runs while hidden in the tray or casting.
 const miracastSearchEvery = 30 * time.Second
 
+// source is a capture-source toggle; id is the daemon's source name.
+type source struct{ id, label, tooltip string }
+
 // sources lists the capture-source toggles in display order.
-var sources = []struct{ id, label string }{
-	{"monitor", "Screen"},
-	{"window", "Window"},
-	{"any", "Ask"},
+var sources = []source{
+	{"monitor", "Screen", "Cast a screen. Each receiver remembers the screen chosen for it"},
+	{"window", "Window", "Cast one window"},
 }
 
 // window shows the daemon state and turns clicks into daemon requests. Its
@@ -104,6 +106,7 @@ func newWindow(app *gtk.Application, opts options) *window {
 	for _, s := range sources {
 		id := s.id
 		btn := gtk.NewToggleButtonWithLabel(s.label)
+		btn.SetTooltipText(s.tooltip)
 		btn.SetGroup(group)
 		group = btn
 		btn.SetActive(id == w.source)

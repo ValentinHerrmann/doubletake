@@ -10,13 +10,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/diamondburned/gotk4/pkg/core/glib"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
-
-	"doubletake/internal/airplay"
 )
 
 const appID = "org.doubletake.UI"
@@ -37,14 +36,14 @@ func parseOptions(args []string) (options, string, error) {
 	fs := flag.NewFlagSet("doubletake-ui", flag.ContinueOnError)
 	fs.SetOutput(&out)
 	fs.StringVar(&opts.doubletake, "doubletake", "", "Path to the doubletake binary used to start the daemon (default: next to this binary, then doubletake-src or doubletake on PATH)")
-	fs.StringVar(&opts.source, "source", "any", "Capture source: any (picker offers screens and windows), monitor or window")
+	fs.StringVar(&opts.source, "source", "monitor", "Capture source: monitor or window")
 	fs.BoolVar(&opts.noAudio, "no-audio", false, "Do not stream audio (applies when this UI starts the daemon)")
 	fs.BoolVar(&opts.hidden, "hidden", false, "Start in the system tray without showing the window (shows it if no tray appears)")
 	if err := fs.Parse(args); err != nil {
 		return opts, out.String(), err
 	}
-	if _, err := airplay.ParseSource(opts.source); err != nil {
-		return opts, "", err
+	if !slices.ContainsFunc(sources, func(s source) bool { return s.id == opts.source }) {
+		return opts, "", fmt.Errorf("unknown source %q (want monitor or window)", opts.source)
 	}
 	fs.Visit(func(f *flag.Flag) { opts.sourceSet = opts.sourceSet || f.Name == "source" })
 	return opts, out.String(), nil

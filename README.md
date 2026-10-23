@@ -12,7 +12,7 @@ It adds:
 - **Freeze, Blackout and Mute** while casting, in the app, its tray menu and
   `doubletake-ctl`, for AirPlay and Miracast receivers.
 - **Capture source choice**: `-source any|monitor|window` on the CLI and the
-  daemon, and a Screen / Window / Ask switch in the app.
+  daemon, and a Screen / Window switch in the app.
 - **Miracast** (experimental): Wi-Fi Direct displays in the same app and
   daemon as AirPlay receivers; see [Miracast](#miracast).
 - **One-line install, update and uninstall** from this fork's releases.
@@ -78,8 +78,8 @@ Start **Doubletake** from the app menu, or run `doubletake-ui`. The window:
 - asks for the PIN shown on the receiver, or its password, when needed;
 - stops with **Stop casting**.
 
-The **Screen / Window / Ask** switch chooses what the screen-sharing dialog
-offers for the next connection. **Screen** remembers the chosen screen per
+The **Screen / Window** switch chooses what the screen-sharing dialog offers
+for the next connection. **Screen** remembers the chosen screen per
 receiver, so the dialog appears only once.
 
 ```sh
