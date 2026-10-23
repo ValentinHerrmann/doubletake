@@ -348,7 +348,7 @@ type Daemon struct {
 	// only on request, since it competes with normal Wi-Fi traffic.
 	p2p             *miracast.P2P
 	p2pErr          error
-	p2pOpened       bool
+	p2pOpenedAt     time.Time // last open attempt
 	p2pSearching    bool
 	p2pSearchCancel context.CancelFunc
 	miracastPeers   []miracast.Peer

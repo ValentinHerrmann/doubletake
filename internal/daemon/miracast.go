@@ -23,6 +23,9 @@ const (
 	miracastPeerTTL = 2 * time.Minute
 	// miracastPeerWait bounds the search for the chosen display before connecting.
 	miracastPeerWait = 30 * time.Second
+	// p2pRetryInterval spaces out attempts to open a missing P2P device, which
+	// can appear later: Wi-Fi switched on, or the card back after resume.
+	p2pRetryInterval = 30 * time.Second
 )
 
 func isMiracastTarget(target string) bool {
@@ -36,17 +39,20 @@ func streamProtocol(target string) string {
 	return airplayProtocol
 }
 
-// p2pLocked opens the Wi-Fi P2P device on first use. A missing device is
-// remembered so every poll does not retry it. Must be called with d.mu held.
+// p2pLocked opens the Wi-Fi P2P device on first use. A failed open is retried
+// after p2pRetryInterval, not on every poll. Must be called with d.mu held.
 func (d *Daemon) p2pLocked() (*miracast.P2P, error) {
-	if !d.p2pOpened {
-		d.p2pOpened = true
+	if d.p2p == nil && time.Since(d.p2pOpenedAt) >= p2pRetryInterval {
+		d.p2pOpenedAt = time.Now()
 		d.p2p, d.p2pErr = miracast.OpenP2P()
 		if d.p2pErr != nil {
 			log.Printf("[daemon] Miracast unavailable: %v", d.p2pErr)
 		}
 	}
-	return d.p2p, d.p2pErr
+	if d.p2p == nil {
+		return nil, d.p2pErr
+	}
+	return d.p2p, nil
 }
 
 func (d *Daemon) closeP2P() {

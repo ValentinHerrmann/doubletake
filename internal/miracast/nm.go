@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -45,7 +46,9 @@ type Peer struct {
 
 // P2P drives NetworkManager's Wi-Fi P2P device over the system bus.
 type P2P struct {
-	conn   *dbus.Conn
+	conn *dbus.Conn
+
+	mu     sync.Mutex
 	device dbus.ObjectPath
 }
 
@@ -57,19 +60,53 @@ func OpenP2P() (*P2P, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect to system bus: %w", err)
 	}
+	device, err := findP2PDevice(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return &P2P{conn: conn, device: device}, nil
+}
+
+func findP2PDevice(conn *dbus.Conn) (dbus.ObjectPath, error) {
 	var devices []dbus.ObjectPath
 	if err := conn.Object(nmService, nmPath).Call(nmService+".GetDevices", 0).Store(&devices); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("NetworkManager GetDevices: %w", err)
+		return "", fmt.Errorf("NetworkManager GetDevices: %w", err)
 	}
 	for _, device := range devices {
-		kind, err := conn.Object(nmService, device).GetProperty(nmDeviceIface + ".DeviceType")
-		if err == nil && kind.Value() == uint32(nmDeviceTypeWifiP2P) {
-			return &P2P{conn: conn, device: device}, nil
+		if isP2PDevice(conn, device) {
+			return device, nil
 		}
 	}
-	conn.Close()
-	return nil, ErrNoP2PDevice
+	return "", ErrNoP2PDevice
+}
+
+func isP2PDevice(conn *dbus.Conn, device dbus.ObjectPath) bool {
+	kind, err := conn.Object(nmService, device).GetProperty(nmDeviceIface + ".DeviceType")
+	return err == nil && kind.Value() == uint32(nmDeviceTypeWifiP2P)
+}
+
+// currentDevice returns the P2P device, looking it up again when
+// NetworkManager has replaced it: resume from suspend removes the Wi-Fi card
+// and adds it back under a new object path.
+func (p *P2P) currentDevice() (dbus.ObjectPath, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if isP2PDevice(p.conn, p.device) {
+		return p.device, nil
+	}
+	device, err := findP2PDevice(p.conn)
+	if err != nil {
+		return "", err
+	}
+	p.device = device
+	return device, nil
+}
+
+func (p *P2P) cachedDevice() dbus.ObjectPath {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.device
 }
 
 // Close releases the bus connection and with it any group it activated.
@@ -79,7 +116,11 @@ func (p *P2P) Close() error { return p.conn.Close() }
 // competes with normal Wi-Fi traffic, so callers keep it short. A non-nil
 // progress receives the sinks found so far every findProgressInterval.
 func (p *P2P) Find(ctx context.Context, duration time.Duration, progress func([]Peer)) ([]Peer, error) {
-	device := p.conn.Object(nmService, p.device)
+	path, err := p.currentDevice()
+	if err != nil {
+		return nil, err
+	}
+	device := p.conn.Object(nmService, path)
 	timeout := int32(duration / time.Second)
 	if timeout < 1 {
 		timeout = 1
@@ -118,7 +159,11 @@ wait:
 // so a following Connect finds its peer object. It leaves the search running;
 // connecting ends it.
 func (p *P2P) WaitForPeer(ctx context.Context, hwAddress string, timeout time.Duration) error {
-	device := p.conn.Object(nmService, p.device)
+	path, err := p.currentDevice()
+	if err != nil {
+		return err
+	}
+	device := p.conn.Object(nmService, path)
 	options := map[string]dbus.Variant{"timeout": dbus.MakeVariant(int32(timeout / time.Second))}
 	if err := device.CallWithContext(ctx, nmWifiP2PIface+".StartFind", 0, options).Err; err != nil {
 		return fmt.Errorf("start P2P find: %w", err)
@@ -148,7 +193,7 @@ func (p *P2P) WaitForPeer(ctx context.Context, hwAddress string, timeout time.Du
 
 // Peers lists the Wi-Fi Display sinks NetworkManager currently knows about.
 func (p *P2P) Peers() ([]Peer, error) {
-	value, err := p.conn.Object(nmService, p.device).GetProperty(nmWifiP2PIface + ".Peers")
+	value, err := p.conn.Object(nmService, p.cachedDevice()).GetProperty(nmWifiP2PIface + ".Peers")
 	if err != nil {
 		return nil, fmt.Errorf("read P2P peers: %w", err)
 	}
@@ -227,7 +272,7 @@ func (p *P2P) Connect(ctx context.Context, hwAddress string) (*Group, error) {
 	var connection, active dbus.ObjectPath
 	var result map[string]dbus.Variant
 	err = p.conn.Object(nmService, nmPath).CallWithContext(ctx, nmService+".AddAndActivateConnection2", 0,
-		settings, p.device, peerPath, options).Store(&connection, &active, &result)
+		settings, p.cachedDevice(), peerPath, options).Store(&connection, &active, &result)
 	if err != nil {
 		return nil, fmt.Errorf("activate Wi-Fi P2P connection: %w", err)
 	}
