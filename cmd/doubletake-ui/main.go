@@ -1,8 +1,8 @@
 // Command doubletake-ui is a small GTK4 desktop UI for doubletake: it lists
 // the AirPlay receivers on the network, answers PIN prompts and starts/stops
 // screen mirroring. It drives the doubletake daemon over its control socket
-// and starts the daemon when none is running, so casting continues after the
-// window is closed.
+// and starts the daemon when none is running, so casting continues while the
+// window is hidden in the tray. Quitting the app stops casting.
 package main
 
 import (
@@ -63,6 +63,7 @@ func main() {
 		}
 		if win == nil {
 			win = newWindow(app, opts)
+			app.ConnectShutdown(win.stopCasting)
 			startTray(app, win)
 			if opts.hidden {
 				w := win

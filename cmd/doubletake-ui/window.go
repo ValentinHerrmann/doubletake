@@ -16,6 +16,10 @@ import (
 
 const pollMillis = 1000
 
+// quitDisconnectWait bounds how long quitting waits for the daemon to stop
+// casting, so a stuck daemon cannot keep the app from exiting.
+const quitDisconnectWait = 5 * time.Second
+
 // miracastSearchEvery spaces Miracast searches while the window is open: the
 // daemon searches for 20 s, then Wi-Fi gets 10 s undisturbed. A search moves
 // the radio off its channel, so none runs while hidden in the tray or casting.
@@ -51,8 +55,7 @@ type window struct {
 	timer      glib.SourceHandle
 	view       view
 	lastState  string
-	shownKey   string
-	shown      []daemon.DeviceInfo
+	rows       map[string]*deviceRow // receiver list rows by connect target
 	actionErr  string
 }
 
@@ -62,6 +65,7 @@ func newWindow(app *gtk.Application, opts options) *window {
 		client:            daemonclient.NewDefault(),
 		source:            opts.source,
 		app:               app,
+		rows:              map[string]*deviceRow{},
 	}
 	w.SetTitle("Doubletake")
 	w.SetDefaultSize(360, 480)
@@ -97,8 +101,8 @@ func newWindow(app *gtk.Application, opts options) *window {
 	w.list.SetSelectionMode(gtk.SelectionNone)
 	w.list.AddCSSClass("frame")
 	w.list.ConnectRowActivated(func(row *gtk.ListBoxRow) {
-		if i := row.Index(); i >= 0 && i < len(w.shown) {
-			w.connect(w.shown[i], w.source)
+		if r := w.rows[row.Name()]; r != nil {
+			w.connect(r.device, w.source)
 		}
 	})
 	scroll := gtk.NewScrolledWindow()
@@ -261,7 +265,7 @@ func (w *window) addKeepAwakeAction(app *gtk.Application) {
 
 // updateInhibit blocks the screensaver, screen lock and suspend while casting
 // with keep awake on, and lifts the block otherwise. The block ends with this
-// app: a cast that continues after Quit no longer keeps the screen awake.
+// app, which stops casting when it quits.
 func (w *window) updateInhibit() {
 	want := w.settings.KeepAwake && w.view.casting
 	switch {
@@ -284,6 +288,24 @@ func (w *window) updateInhibit() {
 func (w *window) hideWhenConnected(prev, v view) {
 	if prev.busy && !prev.casting && v.casting && w.IsVisible() && w.tray != nil && trayAvailable() {
 		w.SetVisible(false)
+	}
+}
+
+// stopCasting ends every cast and pending connection when the app quits,
+// whichever way it quits: the tray's Quit, or closing the window without a
+// tray. The daemon keeps running for the next start.
+func (w *window) stopCasting() {
+	if !w.ready {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = w.client.Disconnect()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(quitDisconnectWait):
 	}
 }
 
@@ -406,37 +428,69 @@ func (w *window) render(v view) {
 	}
 }
 
-// renderDevices rebuilds the receiver list only when it changed, so rows do
-// not flicker or lose focus on every poll.
+// deviceRow is one receiver in the list. Its widget name is the device's
+// connect target, which row activation looks up.
+type deviceRow struct {
+	row    *gtk.ListBoxRow
+	name   *gtk.Label
+	detail *gtk.Label
+	device daemon.DeviceInfo
+}
+
+// renderDevices updates the receiver list in place. Discovery runs all the
+// time and busy networks report devices every few seconds, so rows never
+// move: a known receiver keeps its place, a new one is added at the bottom
+// (the first poll fills the list alphabetically), and a vanished one is
+// removed. Rebuilding the list would reset its scroll position and shift
+// rows under the pointer.
 func (w *window) renderDevices(v view) {
-	var key strings.Builder
-	for _, d := range v.devices {
-		key.WriteString(d.IP + "|" + d.Name + "|" + d.Model + "\n")
-	}
 	w.list.SetSensitive(v.canChoose)
-	if key.String() == w.shownKey {
-		return
-	}
-	w.shownKey = key.String()
-	w.shown = v.devices
-	w.list.RemoveAll()
+	present := make(map[string]bool, len(v.devices))
 	for _, d := range v.devices {
-		row := gtk.NewBox(gtk.OrientationHorizontal, 6)
-		row.SetMarginTop(6)
-		row.SetMarginBottom(6)
-		row.SetMarginStart(8)
-		row.SetMarginEnd(8)
-		labels := gtk.NewBox(gtk.OrientationVertical, 2)
-		labels.SetHExpand(true)
-		name := gtk.NewLabel(d.Name)
-		name.SetXAlign(0)
-		meta := gtk.NewLabel(deviceDetail(d))
-		meta.SetXAlign(0)
-		meta.AddCSSClass("dim-label")
-		meta.AddCSSClass("caption")
-		labels.Append(name)
-		labels.Append(meta)
-		row.Append(labels)
-		w.list.Append(row)
+		present[d.IP] = true
+	}
+	for target, r := range w.rows {
+		if !present[target] {
+			w.list.Remove(r.row)
+			delete(w.rows, target)
+		}
+	}
+	for _, d := range v.devices {
+		if r := w.rows[d.IP]; r != nil {
+			r.device = d
+			setLabel(r.name, d.Name)
+			setLabel(r.detail, deviceDetail(d))
+			continue
+		}
+		w.rows[d.IP] = w.appendDeviceRow(d)
+	}
+}
+
+func (w *window) appendDeviceRow(d daemon.DeviceInfo) *deviceRow {
+	box := gtk.NewBox(gtk.OrientationVertical, 2)
+	box.SetMarginTop(6)
+	box.SetMarginBottom(6)
+	box.SetMarginStart(8)
+	box.SetMarginEnd(8)
+	name := gtk.NewLabel(d.Name)
+	name.SetXAlign(0)
+	detail := gtk.NewLabel(deviceDetail(d))
+	detail.SetXAlign(0)
+	detail.AddCSSClass("dim-label")
+	detail.AddCSSClass("caption")
+	box.Append(name)
+	box.Append(detail)
+	row := gtk.NewListBoxRow()
+	row.SetName(d.IP)
+	row.SetChild(box)
+	w.list.Append(row)
+	return &deviceRow{row: row, name: name, detail: detail, device: d}
+}
+
+// setLabel changes a label only when its text differs, so a poll does not
+// trigger a relayout for every row.
+func setLabel(label *gtk.Label, text string) {
+	if label.Text() != text {
+		label.SetText(text)
 	}
 }

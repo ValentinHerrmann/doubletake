@@ -134,9 +134,7 @@ when the last cast stops.
 
 **Keep screen awake while casting** (window menu ☰ or tray menu) blocks the
 screensaver, screen lock and suspend while a cast runs. It is off by default
-and saved in `~/.config/doubletake/ui.json`. The block lasts only while the
-app runs: after **Quit**, a cast that continues no longer keeps the screen
-awake.
+and saved in `~/.config/doubletake/ui.json`.
 
 ### System tray and start on login
 
@@ -150,6 +148,9 @@ screen awake while casting** and **Quit**. KDE Plasma has a tray built in.
 GNOME needs the
 [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
 extension. Without a tray, closing the window quits the app as before.
+
+Casting continues while the window is hidden in the tray. **Quit**, and
+closing the window without a tray, stop casting first.
 
 **Start on login** is off by default. Turn it on from the tray menu or the
 window menu (☰). It writes `~/.config/autostart/doubletake-ui.desktop`, which
